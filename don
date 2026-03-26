@@ -2,7 +2,7 @@
 set -u
 
 # --- ТЕКУЩАЯ ВЕРСИЯ СКРИПТА ---
-export APP_VERSION="01.0"
+export APP_VERSION="01.1"
 export REPO_RAW="https://raw.githubusercontent.com/DonMatteoVPN/DONMATTEO-PRO-MANAGER/main"
 
 # Глобальные цвета
@@ -42,7 +42,9 @@ if [[ "${1:-}" == "--silent-clean" ]]; then silent_cleaner_run; exit 0; fi
 
 trap 'echo -e "\n${YELLOW}Возврат...${NC}"; sleep 1; return 2>/dev/null || exit 0' INT
 
-export -f pause() { echo -e "\n${CYAN}Нажмите [Enter] для возврата...${NC}"; read -r < /dev/tty; }
+# ИСПРАВЛЕННЫЙ БЛОК:
+pause() { echo -e "\n${CYAN}Нажмите [Enter] для возврата...${NC}"; read -r < /dev/tty; }
+export -f pause
 
 show_banner() {
     echo -e "${CYAN}======================================================${NC}"
@@ -60,7 +62,6 @@ show_banner() {
 
 # --- ПРОВЕРКА ОБНОВЛЕНИЙ ---
 check_updates() {
-    # Скачиваем версию с гитхаба (таймаут 2 сек, чтобы меню не зависало)
     REMOTE_VERSION=$(curl -s --max-time 2 "${REPO_RAW}/don" | grep -oP '^export APP_VERSION="\K[^"]+')
     if [[ -n "$REMOTE_VERSION" && "$REMOTE_VERSION" != "$APP_VERSION" ]]; then
         export HAS_UPDATE="yes"
@@ -71,12 +72,11 @@ check_updates() {
 }
 
 main_menu() {
-    check_updates # Проверяем обновы в фоне при запуске
+    check_updates 
     
     while true; do
         clear; show_banner
         
-        # Если есть обнова - выводим ЯРКИЙ БАННЕР!
         if [[ "$HAS_UPDATE" == "yes" ]]; then
             echo -e "${YELLOW}${BOLD}🎉 ВНИМАНИЕ! ДОСТУПНО НОВОЕ ОБНОВЛЕНИЕ МЕНЕДЖЕРА! 🎉${NC}"
             echo -e "${GREEN}✨ Вышла новая версия: v${LATEST_VER}${NC} (У вас v${APP_VERSION})"
