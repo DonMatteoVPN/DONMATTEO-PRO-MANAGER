@@ -33,14 +33,153 @@ run_with_diff() {
     pause
 }
 
-analyze_disk() {
-    clear; echo -e "${MAGENTA}=== АНАЛИЗ ЗАНЯТОГО МЕСТА ===${NC}"
-    echo -e "${GRAY}Поиск самых тяжелых папок...${NC}\n"
-    du -sh /var/log /var/lib/docker /tmp /var/cache/apt /var/lib/snapd 2>/dev/null | sort -hr | while read -r size path; do
-        echo -e " ${YELLOW}${size}${NC}\t ${CYAN}${path}${NC}"
+# ======================================================================
+# ИНТЕРАКТИВНЫЙ БРАУЗЕР ФАЙЛОВ И ПАПОК
+# ======================================================================
+
+file_interaction() {
+    local FILE=$1
+    local MODE=$2
+    
+    while true; do
+        clear
+        echo -e "${MAGENTA}=== РАБОТА С ФАЙЛОМ ===${NC}"
+        echo -e "${CYAN}Файл:${NC} $FILE"
+        echo -e "${CYAN}Размер:${NC} $(du -sh "$FILE" | awk '{print $1}')\n"
+        
+        echo -e " ${YELLOW}1.${NC} 👀 Посмотреть последние 50 строк (Безопасно)"
+        
+        if [[ "$MODE" == "truncate" ]]; then
+            echo -e " ${RED}2.${NC} 🧹 Очистить файл (Сбросить до 0 байт, безопасно для логов)"
+        elif [[ "$MODE" == "rm" ]]; then
+            echo -e " ${RED}2.${NC} 🗑️ Удалить файл навсегда"
+        fi
+        
+        echo -e "${BLUE}------------------------------------------------------${NC}"
+        echo -e " ${CYAN}0.${NC} ↩️  Назад"
+        
+        read -p ">> " f_ch
+        case $f_ch in
+            1) 
+                clear
+                echo -e "${YELLOW}Последние 50 строк файла $FILE:${NC}\n"
+                if file "$FILE" | grep -qiE "text|empty"; then
+                    tail -n 50 "$FILE"
+                else
+                    echo -e "${RED}[!] Это бинарный файл или архив. Вывод текста невозможен, чтобы не сломать консоль.${NC}"
+                fi
+                pause
+                ;;
+            2)
+                if [[ "$MODE" == "truncate" ]]; then
+                    > "$FILE"
+                    echo -e "${GREEN}[+] Файл очищен!${NC}"; sleep 1; return
+                elif [[ "$MODE" == "rm" ]]; then
+                    rm -f "$FILE"
+                    echo -e "${GREEN}[+] Файл удален!${NC}"; sleep 1; return
+                else
+                    echo -e "${RED}Удаление заблокировано для вашей безопасности.${NC}"; sleep 2
+                fi
+                ;;
+            0) return ;;
+        esac
     done
-    echo -e "\n${GREEN}Завершено.${NC}"; pause
 }
+
+inspect_directory() {
+    local DIR=$1
+    local IS_SAFE_RM=$2 # Режимы: "truncate", "rm", "block"
+    
+    while true; do
+        clear
+        echo -e "${MAGENTA}=== ИЗУЧЕНИЕ ДИРЕКТОРИИ ===${NC}"
+        echo -e "${CYAN}Текущая папка:${NC} $DIR"
+        echo -e "${GRAY}Топ-10 самых тяжелых элементов внутри:${NC}\n"
+        
+        # Получаем список файлов и папок с размерами
+        du -sh "$DIR"/* 2>/dev/null | sort -hr | head -10 > /tmp/ad_tmp.txt
+        
+        if [ ! -s /tmp/ad_tmp.txt ]; then
+            echo -e "  ${GRAY}(Пусто или нет прав доступа)${NC}"
+            declare -a PATHS=()
+        else
+            local i=1
+            declare -a PATHS
+            declare -a TYPES
+            while read -r line; do
+                local size=$(echo "$line" | awk '{print $1}')
+                local fpath=$(echo "$line" | cut -f2-)
+                local fname=$(basename "$fpath")
+                
+                if [ -d "$fpath" ]; then
+                    echo -e "  ${YELLOW}[$i]${NC} 📁 ${CYAN}${size}${NC}\t $fname/"
+                    TYPES[$i]="dir"
+                else
+                    echo -e "  ${YELLOW}[$i]${NC} 📄 ${GREEN}${size}${NC}\t $fname"
+                    TYPES[$i]="file"
+                fi
+                PATHS[$i]="$fpath"
+                ((i++))
+            done < /tmp/ad_tmp.txt
+            rm -f /tmp/ad_tmp.txt
+        fi
+        
+        echo -e "\n${BLUE}------------------------------------------------------${NC}"
+        if [[ "$IS_SAFE_RM" == "block" ]]; then
+            echo -e "${RED}⚠️ ВНИМАНИЕ: Ручное удаление файлов здесь сломает систему!${NC}"
+            echo -e "${RED}Разрешен только просмотр папок.${NC}"
+            echo -e "${BLUE}------------------------------------------------------${NC}"
+        fi
+        
+        echo -e " Введите ${YELLOW}НОМЕР${NC} чтобы открыть, или ${CYAN}0${NC} для возврата."
+        read -p ">> " choice
+        
+        if [[ "$choice" == "0" || -z "$choice" ]]; then return; fi
+        
+        if [[ "$choice" =~ ^[0-9]+$ ]] && [ "$choice" -lt "$i" ] && [ "$choice" -gt 0 ]; then
+            local TARGET="${PATHS[$choice]}"
+            local TYPE="${TYPES[$choice]}"
+            
+            if [[ "$TYPE" == "dir" ]]; then
+                inspect_directory "$TARGET" "$IS_SAFE_RM"
+            else
+                file_interaction "$TARGET" "$IS_SAFE_RM"
+            fi
+        else
+            echo -e "${RED}Неверный ввод.${NC}"; sleep 1
+        fi
+    done
+}
+
+analyze_disk() {
+    while true; do
+        clear; echo -e "${MAGENTA}=== ИНТЕРАКТИВНЫЙ АНАЛИЗАТОР ДИСКА ===${NC}"
+        echo -e "${GRAY}Выберите директорию, в которую хотите провалиться:${NC}\n"
+        
+        local S_LOG=$(du -sh /var/log 2>/dev/null | awk '{print $1}')
+        local S_DOCKER=$(du -sh /var/lib/docker 2>/dev/null | awk '{print $1}')
+        local S_APT=$(du -sh /var/cache/apt 2>/dev/null | awk '{print $1}')
+        local S_TMP=$(du -sh /tmp 2>/dev/null | awk '{print $1}')
+        
+        echo -e " ${YELLOW}1.${NC} 📚 /var/log         ${CYAN}[${S_LOG:-0}]${NC}  ${GRAY}(Безопасно очищать файлы)${NC}"
+        echo -e " ${YELLOW}2.${NC} 🐳 /var/lib/docker  ${CYAN}[${S_DOCKER:-0}]${NC}  ${GRAY}(Только просмотр, удалять ОПАСНО)${NC}"
+        echo -e " ${YELLOW}3.${NC} 📦 /var/cache/apt   ${CYAN}[${S_APT:-0}]${NC}  ${GRAY}(Безопасно удалять файлы)${NC}"
+        echo -e " ${YELLOW}4.${NC} 🗑️  /tmp             ${CYAN}[${S_TMP:-0}]${NC}  ${GRAY}(Безопасно удалять файлы)${NC}"
+        echo -e "${BLUE}------------------------------------------------------${NC}"
+        echo -e " ${CYAN}0.${NC} ↩️  Назад"
+        
+        read -p ">> " ad_choice
+        case $ad_choice in
+            1) inspect_directory "/var/log" "truncate" ;;
+            2) inspect_directory "/var/lib/docker" "block" ;;
+            3) inspect_directory "/var/cache/apt" "rm" ;;
+            4) inspect_directory "/tmp" "rm" ;;
+            0) return ;;
+        esac
+    done
+}
+
+# ======================================================================
 
 clean_all_funcs() {
     echo -e "${BLUE}[i] Очистка логов...${NC}"; journalctl --vacuum-time=3d; journalctl --vacuum-size=200M
@@ -54,7 +193,6 @@ setup_cron() {
     clear; echo -e "${MAGENTA}=== ИНТЕРАКТИВНАЯ НАСТРОЙКА АВТООЧИСТКИ ===${NC}"
     echo -e "${GRAY}Скрипт будет сам запускать тихую очистку по вашему расписанию.${NC}\n"
 
-    # --- ПРОВЕРКА АКТИВНОГО ЗАДАНИЯ ---
     local existing_job=$(crontab -l 2>/dev/null | grep '/usr/local/bin/don --silent-clean')
     if [[ -n "$existing_job" ]]; then
         local e_min=$(echo "$existing_job" | awk '{print $1}')
@@ -69,12 +207,7 @@ setup_cron() {
         echo -e " ${CYAN}0.${NC} ↩️  Назад"
         read -p ">> " action
         case $action in
-            2)
-                # ИСПРАВЛЕНО ЗДЕСЬ
-                crontab -l 2>/dev/null | grep -v -- '--silent-clean' | crontab -
-                echo -e "\n${GREEN}[+] Автоочистка успешно отключена!${NC}"
-                pause; return
-                ;;
+            2) crontab -l 2>/dev/null | grep -v -- '--silent-clean' | crontab -; echo -e "\n${GREEN}[+] Автоочистка успешно отключена!${NC}"; pause; return ;;
             0) return ;;
             1) echo -e "\n${CYAN}--- Настройка нового расписания ---${NC}" ;;
             *) return ;;
@@ -102,7 +235,6 @@ setup_cron() {
 
     local job="$c_min $c_hour * * $c_day /usr/local/bin/don --silent-clean > /dev/null 2>&1"
     
-    # ИСПРАВЛЕНО ЗДЕСЬ
     crontab -l 2>/dev/null | grep -v -- '--silent-clean' | crontab -
     (crontab -l 2>/dev/null; echo "$job") | crontab -
     
@@ -126,9 +258,8 @@ menu_cleaner() {
         echo -e " ${YELLOW}5.${NC} 🗑️ Очистить временные файлы (/tmp)"
         echo -e " ${YELLOW}6.${NC} 🧩 Очистить старые Snap пакеты"
         echo -e "${BLUE}------------------------------------------------------${NC}"
-        echo -e " ${CYAN}7.${NC} 🔍 Анализ диска (Что занимает место?)"
+        echo -e " ${CYAN}7.${NC} 🔍 Интерактивный Анализатор Диска (Smart Explorer)"
         
-        # ИСПРАВЛЕНО ЗДЕСЬ (добавлено двойное тире перед строкой поиска)
         if crontab -l 2>/dev/null | grep -q -- '--silent-clean'; then
             echo -e " ${MAGENTA}8.${NC} ⏰ Настроить Автоочистку ${GREEN}[АКТИВНА]${NC}"
         else
