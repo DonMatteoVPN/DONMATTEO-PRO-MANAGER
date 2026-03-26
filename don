@@ -2,7 +2,7 @@
 set -u
 
 # --- ТЕКУЩАЯ ВЕРСИЯ СКРИПТА ---
-export APP_VERSION="01.016"
+export APP_VERSION="01.017"
 export REPO_RAW="https://raw.githubusercontent.com/DonMatteoVPN/DONMATTEO-PRO-MANAGER/main"
 
 # Глобальные цвета
@@ -132,13 +132,13 @@ main_menu() {
         
         case $choice in
             u|U) install_menu ;;
+            r|R) menu_scanner ;;
             1) menu_ufw ;; 
             2) menu_ssh ;; 
             3) menu_fail2ban ;; 
             4) menu_trafficguard ;;
             5) manage_swap ;; 
             6) menu_cleaner ;;
-            7) menu_scanner ;;
             8) [[ "$HAS_UPDATE" == "yes" ]] && run_auto_update || echo -e "${RED}Обновлений нет.${NC}"; sleep 1 ;;
             0) echo -e "${GREEN}Удачной работы! До связи! 💪${NC}"; exit 0 ;;
             *) echo -e "${RED}Ошибка: Неверный выбор.${NC}"; sleep 1 ;;
