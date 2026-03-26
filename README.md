@@ -5,8 +5,5 @@
 
 ```bash
 # 1. Скачиваем инсталлятор с твоего GitHub и сразу запускаем
-sudo bash -c "$(curl -fsSL https://raw.githubusercontent.com/DonMatteoVPN/DONMATTEO-PRO-MANAGER/main/install.sh)"
-
-# 2. Запускаем красивое меню из любой точки!
-don
+cd /opt && sudo curl -fsSLO https://raw.githubusercontent.com/DonMatteoVPN/DONMATTEO-PRO-MANAGER/main/install.sh && sudo bash install.sh
 ```
