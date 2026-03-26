@@ -1,6 +1,10 @@
 #!/bin/bash
 set -u
 
+# --- ТЕКУЩАЯ ВЕРСИЯ СКРИПТА ---
+export APP_VERSION="23.0"
+export REPO_RAW="https://raw.githubusercontent.com/DonMatteoVPN/DONMATTEO-PRO-MANAGER/main"
+
 # Глобальные цвета
 export RED='\033[0;31m'
 export GREEN='\033[0;32m'
@@ -25,7 +29,7 @@ export MOD_DIR="/opt/remnawave/modules"
 if [[ $EUID -ne 0 ]]; then echo -e "${RED}Запустите команду от имени root (sudo).${NC}"; exit 1; fi
 
 # --- Загрузка модулей ---
-for mod in m_ufw m_ssh m_f2b m_tg m_swap m_cleaner m_installer; do
+for mod in m_ufw m_ssh m_f2b m_tg m_swap m_cleaner m_installer m_update; do
     if [[ -f "${MOD_DIR}/${mod}.sh" ]]; then
         source "${MOD_DIR}/${mod}.sh"
     else
@@ -34,7 +38,6 @@ for mod in m_ufw m_ssh m_f2b m_tg m_swap m_cleaner m_installer; do
     fi
 done
 
-# Тихий режим для крона
 if [[ "${1:-}" == "--silent-clean" ]]; then silent_cleaner_run; exit 0; fi
 
 trap 'echo -e "\n${YELLOW}Возврат...${NC}"; sleep 1; return 2>/dev/null || exit 0' INT
@@ -51,24 +54,57 @@ show_banner() {
     echo -e "                                                      "
     echo -e "${RED}${BOLD}                 С ЛЮБОВЬЮ БЛЯТЬ                 ${NC}"
     echo -e "${CYAN}======================================================${NC}"
+    echo -e " ${GRAY}Версия ядра: v${APP_VERSION}${NC}"
+    echo -e "${CYAN}======================================================${NC}"
+}
+
+# --- ПРОВЕРКА ОБНОВЛЕНИЙ ---
+check_updates() {
+    # Скачиваем версию с гитхаба (таймаут 2 сек, чтобы меню не зависало)
+    REMOTE_VERSION=$(curl -s --max-time 2 "${REPO_RAW}/don" | grep -oP '^export APP_VERSION="\K[^"]+')
+    if [[ -n "$REMOTE_VERSION" && "$REMOTE_VERSION" != "$APP_VERSION" ]]; then
+        export HAS_UPDATE="yes"
+        export LATEST_VER="$REMOTE_VERSION"
+    else
+        export HAS_UPDATE="no"
+    fi
 }
 
 main_menu() {
+    check_updates # Проверяем обновы в фоне при запуске
+    
     while true; do
         clear; show_banner
+        
+        # Если есть обнова - выводим ЯРКИЙ БАННЕР!
+        if [[ "$HAS_UPDATE" == "yes" ]]; then
+            echo -e "${YELLOW}${BOLD}🎉 ВНИМАНИЕ! ДОСТУПНО НОВОЕ ОБНОВЛЕНИЕ МЕНЕДЖЕРА! 🎉${NC}"
+            echo -e "${GREEN}✨ Вышла новая версия: v${LATEST_VER}${NC} (У вас v${APP_VERSION})"
+            echo -e "${CYAN}👉 Нажмите [8], чтобы обновиться в один клик!${NC}"
+            echo -e "${YELLOW}======================================================${NC}"
+        fi
+
         echo -e " ${YELLOW}1.${NC} 🌐 Сетевой Экран (UFW)               ${NC}$(get_ufw_status)"
         echo -e " ${YELLOW}2.${NC} 🔑 Управление SSH (Порты)            "
         echo -e " ${YELLOW}3.${NC} 👮 Защита (Fail2Ban & Whitelist)     ${NC}$(get_f2b_status)"
         echo -e " ${YELLOW}4.${NC} 🚦 TrafficGuard PRO                  ${NC}$(get_tg_status)"
         echo -e " ${YELLOW}5.${NC} ⚙️  Настройки (Swap / Память)        ${NC}$(get_swap_status)"
         echo -e " ${YELLOW}6.${NC} 🧹 Очистка Сервера (Место на диске)  "
+        
+        if [[ "$HAS_UPDATE" == "yes" ]]; then
+            echo -e " ${GREEN}8.${NC} 🎁 ${BOLD}СКАЧАТЬ ОБНОВЛЕНИЕ ДО v${LATEST_VER}${NC}"
+        fi
+        
         echo -e " ${GREEN}9.${NC} 🛠️  УСТАНОВКА И ИНИЦИАЛИЗАЦИЯ        "
         echo -e " ${RED}0.${NC} ❌ Выход                             "
         echo -e "${CYAN}======================================================${NC}"
         read -p "Выберите нужную категорию: " choice
+        
         case $choice in
             1) menu_ufw ;; 2) menu_ssh ;; 3) menu_fail2ban ;; 4) menu_trafficguard ;;
-            5) manage_swap ;; 6) menu_cleaner ;; 9) install_menu ;; 
+            5) manage_swap ;; 6) menu_cleaner ;;
+            8) [[ "$HAS_UPDATE" == "yes" ]] && run_auto_update || echo -e "${RED}Обновлений нет.${NC}"; sleep 1 ;;
+            9) install_menu ;; 
             0) echo -e "${GREEN}Удачной работы! До связи! 💪${NC}"; exit 0 ;;
             *) echo -e "${RED}Ошибка: Неверный выбор.${NC}"; sleep 1 ;;
         esac
