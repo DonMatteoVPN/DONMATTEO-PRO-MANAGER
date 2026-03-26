@@ -77,9 +77,10 @@ check_updates() {
 }
 
 main_menu() {
-    check_updates 
-    
     while true; do
+        # 🚀 ТЕПЕРЬ ПРОВЕРКА ИДЕТ ПРИ КАЖДОМ ВОЗВРАТЕ В МЕНЮ
+        check_updates 
+        
         clear; show_banner
         
         if [[ "$HAS_UPDATE" == "yes" ]]; then
@@ -89,11 +90,8 @@ main_menu() {
             echo -e "${YELLOW}======================================================${NC}"
         fi
 
-        # ПЕРВИЧНАЯ УСТАНОВКА ВЫНЕСЕНА НАВЕРХ
         echo -e " ${GREEN}U.${NC} 🛠️  УСТАНОВКА И ИНИЦИАЛИЗАЦИЯ        "
         echo -e "${BLUE}------------------------------------------------------${NC}"
-        
-        # ПОВСЕДНЕВНЫЕ ЗАДАЧИ
         echo -e " ${YELLOW}1.${NC} 🌐 Сетевой Экран (UFW)               ${NC}$(get_ufw_status)"
         echo -e " ${YELLOW}2.${NC} 🔑 Управление SSH (Порты)            "
         echo -e " ${YELLOW}3.${NC} 👮 Защита (Fail2Ban & Whitelist)     ${NC}$(get_f2b_status)"
@@ -111,7 +109,7 @@ main_menu() {
         read -p "Выберите нужную категорию: " choice
         
         case $choice in
-            u|U) install_menu ;; # Обрабатывает как 'u', так и 'U'
+            u|U) install_menu ;;
             1) menu_ufw ;; 
             2) menu_ssh ;; 
             3) menu_fail2ban ;; 
