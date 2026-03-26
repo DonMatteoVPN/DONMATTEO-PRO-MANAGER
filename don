@@ -112,7 +112,7 @@ main_menu() {
         fi
 
         echo -e " ${GREEN}U.${NC} 🛠️  УСТАНОВКА И ИНИЦИАЛИЗАЦИЯ        "
-        echo -e " ${YELLOW}R.${NC} 🔍 Reality TLS Scanner               ${GRAY}(Поиск маскировки)${NC}"
+        echo -e " ${GREEN}R.${NC} 🔍 Reality TLS Scanner               ${GRAY}(Поиск маскировки)${NC}"
         echo -e "${BLUE}------------------------------------------------------${NC}"
         echo -e " ${YELLOW}1.${NC} 🌐 Сетевой Экран (UFW)               ${NC}$(get_ufw_status)"
         echo -e " ${YELLOW}2.${NC} 🔑 Управление SSH (Порты)            "
