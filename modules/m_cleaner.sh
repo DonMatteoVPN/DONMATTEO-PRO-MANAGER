@@ -70,7 +70,8 @@ setup_cron() {
         read -p ">> " action
         case $action in
             2)
-                crontab -l 2>/dev/null | grep -v '--silent-clean' | crontab -
+                # ИСПРАВЛЕНО ЗДЕСЬ
+                crontab -l 2>/dev/null | grep -v -- '--silent-clean' | crontab -
                 echo -e "\n${GREEN}[+] Автоочистка успешно отключена!${NC}"
                 pause; return
                 ;;
@@ -88,7 +89,6 @@ setup_cron() {
     echo -e " 4 - Четверг       * - Каждый день"
     read -p ">> Ваш выбор: " c_day
     
-    # Регулярка для проверки (только цифры от 0 до 6, запятые или звездочка)
     [[ ! "$c_day" =~ ^([0-6\*](,[0-6])*)$ ]] && { echo -e "${YELLOW}Неверный формат. Установлено: Каждый день (*)${NC}"; c_day="*"; }
     [[ -z "$c_day" ]] && c_day="*"
     
@@ -102,8 +102,8 @@ setup_cron() {
 
     local job="$c_min $c_hour * * $c_day /usr/local/bin/don --silent-clean > /dev/null 2>&1"
     
-    # Удаляем старое задание и ставим новое
-    crontab -l 2>/dev/null | grep -v '--silent-clean' | crontab -
+    # ИСПРАВЛЕНО ЗДЕСЬ
+    crontab -l 2>/dev/null | grep -v -- '--silent-clean' | crontab -
     (crontab -l 2>/dev/null; echo "$job") | crontab -
     
     echo -e "\n${GREEN}[✓] Автоочистка успешно настроена!${NC}"
@@ -128,8 +128,8 @@ menu_cleaner() {
         echo -e "${BLUE}------------------------------------------------------${NC}"
         echo -e " ${CYAN}7.${NC} 🔍 Анализ диска (Что занимает место?)"
         
-        # Если крон уже настроен, добавляем зеленый индикатор к меню
-        if crontab -l 2>/dev/null | grep -q '--silent-clean'; then
+        # ИСПРАВЛЕНО ЗДЕСЬ (добавлено двойное тире перед строкой поиска)
+        if crontab -l 2>/dev/null | grep -q -- '--silent-clean'; then
             echo -e " ${MAGENTA}8.${NC} ⏰ Настроить Автоочистку ${GREEN}[АКТИВНА]${NC}"
         else
             echo -e " ${MAGENTA}8.${NC} ⏰ Настроить Автоочистку (в Cron)"
