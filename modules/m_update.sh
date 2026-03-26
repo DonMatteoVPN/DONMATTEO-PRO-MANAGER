@@ -12,6 +12,7 @@ run_auto_update() {
     
     echo -e "${CYAN}[*] Загрузка нового ядра...${NC}"
     if curl -sL "${REPO_RAW}/don" -o /usr/local/bin/don; then
+        sed -i 's/\r$//' /usr/local/bin/don # <--- АВТООЧИСТКА
         chmod +x /usr/local/bin/don
         echo -e "${GREEN}[+] Ядро успешно обновлено.${NC}"
     else
@@ -27,6 +28,7 @@ run_auto_update() {
     for mod in "${MODULES[@]}"; do
         echo -e " └─ Скачивание ${mod}..."
         curl -sL "${REPO_RAW}/modules/${mod}" -o "/opt/remnawave/modules/${mod}"
+        sed -i 's/\r$//' "/opt/remnawave/modules/${mod}" # <--- АВТООЧИСТКА
     done
     
     echo -e "\n${GREEN}${BOLD}🎉 ОБНОВЛЕНИЕ УСПЕШНО ЗАВЕРШЕНО! 🎉${NC}"
