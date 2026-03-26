@@ -1,8 +1,10 @@
 #!/bin/bash
-# Скрипт установки DONMATTEO PRO MANAGER
+# ======================================================================
+# Установщик DONMATTEO PRO MANAGER
+# ======================================================================
 
-# ⚠️ ЗАМЕНИ НА ССЫЛКУ НА СВОЙ RAW GITHUB:
-REPO_URL="https://raw.githubusercontent.com/ТВОЙ_НИК/donmatteo-manager/main"
+# Ссылка на RAW файлы твоего репозитория
+REPO_URL="https://raw.githubusercontent.com/DonMatteoVPN/DONMATTEO-PRO-MANAGER/main"
 
 RED='\033[0;31m'
 GREEN='\033[0;32m'
@@ -24,7 +26,8 @@ curl -sL "${REPO_URL}/don" -o /usr/local/bin/don
 chmod +x /usr/local/bin/don
 
 echo -e "${CYAN}[*] Скачивание модулей...${NC}"
-MODULES=("m_ufw.sh" "m_ssh.sh" "m_f2b.sh" "m_tg.sh" "m_swap.sh" "m_cleaner.sh" "m_installer.sh")
+# Добавлен новый модуль m_update.sh
+MODULES=("m_ufw.sh" "m_ssh.sh" "m_f2b.sh" "m_tg.sh" "m_swap.sh" "m_cleaner.sh" "m_installer.sh" "m_update.sh")
 
 for mod in "${MODULES[@]}"; do
     curl -sL "${REPO_URL}/modules/${mod}" -o "/opt/remnawave/modules/${mod}"
@@ -36,5 +39,5 @@ echo -e "${GREEN}${BOLD} 🚀 УСТАНОВКА DONMATTEO MANAGER УСПЕШН�
 echo -e "${CYAN}================================================================${NC}"
 echo -e "${YELLOW} Теперь вы можете управлять защитой и сервером из любого места.${NC}"
 echo -e "${YELLOW} Вам больше не нужно искать пути к скриптам или писать bash.${NC}\n"
-echo -e "${W} 👉 Просто введите в консоль команду:${NC} ${GREEN}${BOLD}don${NC}"
+echo -e " 👉 Просто введите в консоль команду: ${GREEN}${BOLD}don${NC}"
 echo -e "${CYAN}================================================================${NC}"
