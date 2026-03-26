@@ -62,8 +62,9 @@ show_banner() {
 
 # --- ПРОВЕРКА ОБНОВЛЕНИЙ ---
 check_updates() {
-    # Добавляем ?t=$(date +%s) чтобы GitHub не отдавал нам кэшированный старый файл
-    REMOTE_VERSION=$(curl -s --max-time 3 "${REPO_RAW}/don?t=$(date +%s)" | grep -m 1 'APP_VERSION=' | cut -d'"' -f2)
+    # 1. Используем заголовки анти-кэша + параметр времени
+    # 2. Отрезаем невидимые символы \r через tr -d
+    REMOTE_VERSION=$(curl -s -H "Cache-Control: no-cache" "${REPO_RAW}/don?t=$(date +%s)" | grep -m 1 '^export APP_VERSION=' | cut -d'"' -f2 | tr -d '\r\n ')
     
     if [[ -n "$REMOTE_VERSION" && "$REMOTE_VERSION" != "$APP_VERSION" ]]; then
         export HAS_UPDATE="yes"
