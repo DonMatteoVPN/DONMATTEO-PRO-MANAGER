@@ -60,12 +60,19 @@ show_banner() {
     echo -e "${CYAN}======================================================${NC}"
 }
 
-# --- ПРОВЕРКА ОБНОВЛЕНИЙ ---
+# --- ПРОВЕРКА ОБНОВЛЕНИЙ (БЕЗ КЭША) ---
 check_updates() {
-    # Добавляем ?t=$(date +%s) для обхода кэша и tr -d для очистки от невидимых символов
-    REMOTE_VERSION=$(curl -s --max-time 3 "${REPO_RAW}/don?t=$(date +%s)" | grep -m 1 '^export APP_VERSION=' | cut -d'"' -f2 | tr -d '\r\n ')
+    # 1. Стучимся напрямую в API GitHub (Отдает моментально, кэш = 0)
+    local API_URL="https://api.github.com/repos/DonMatteoVPN/DONMATTEO-PRO-MANAGER/contents/don"
+    REMOTE_VERSION=$(curl -s --max-time 3 -H "Accept: application/vnd.github.v3.raw" "$API_URL" | grep -m 1 '^export APP_VERSION=' | cut -d'"' -f2 | tr -d '\r\n ')
     
-    if [[ -n "$REMOTE_VERSION" && "$REMOTE_VERSION" != "$APP_VERSION" ]]; then
+    # 2. У API есть лимит (60 раз в час). Если ты открыл меню 61 раз, скрипт незаметно перейдет на обычную ссылку
+    if [[ -z "$REMOTE_VERSION" || ! "$REMOTE_VERSION" =~ ^[0-9]+\.[0-9]+$ ]]; then
+        REMOTE_VERSION=$(curl -s --max-time 3 "${REPO_RAW}/don" | grep -m 1 '^export APP_VERSION=' | cut -d'"' -f2 | tr -d '\r\n ')
+    fi
+    
+    # Сравниваем версии
+    if [[ -n "$REMOTE_VERSION" && "$REMOTE_VERSION" != "$APP_VERSION" && "$REMOTE_VERSION" =~ ^[0-9]+\.[0-9]+$ ]]; then
         export HAS_UPDATE="yes"
         export LATEST_VER="$REMOTE_VERSION"
     else
