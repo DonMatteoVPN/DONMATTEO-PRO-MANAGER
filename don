@@ -2,7 +2,7 @@
 set -u
 
 # --- ТЕКУЩАЯ ВЕРСИЯ СКРИПТА ---
-export APP_VERSION="01.017"
+export APP_VERSION="01.016"
 export REPO_RAW="https://raw.githubusercontent.com/DonMatteoVPN/DONMATTEO-PRO-MANAGER/main"
 
 # Глобальные цвета
@@ -28,15 +28,18 @@ export MOD_DIR="/opt/remnawave/modules"
 
 if [[ $EUID -ne 0 ]]; then echo -e "${RED}Запустите команду от имени root (sudo).${NC}"; exit 1; fi
 
-# --- Загрузка модулей ---
+# --- Загрузка модулей (Бронебойная) ---
 for mod in m_ufw m_ssh m_f2b m_tg m_swap m_cleaner m_installer m_update m_scanner; do
     if [[ -f "${MOD_DIR}/${mod}.sh" ]]; then
-        source "${MOD_DIR}/${mod}.sh" || echo -e "${YELLOW}[!] Ошибка загрузки модуля ${mod}${NC}"
+        source "${MOD_DIR}/${mod}.sh" || echo -e "${RED}[!] Ошибка в коде модуля ${mod}${NC}"
     else
-        echo -e "${RED}Модуль ${mod} не найден! Переустановите менеджер.${NC}"
-        exit 1
+        # Вместо exit 1 просто выводим предупреждение
+        echo -e "${YELLOW}[⚠️] Модуль ${mod} временно недоступен (не найден)${NC}"
+        # Создаем пустую функцию-заглушку, чтобы меню не падало при вызове
+        eval "menu_${mod/m_/}(){ echo -e '${RED}Ошибка: Модуль ${mod} не загружен. Обновите менеджер через пункт 8.${NC}'; pause; }"
     fi
 done
+sleep 1 # Даем время увидеть, если что-то не загрузилось
 
 if [[ "${1:-}" == "--silent-clean" ]]; then silent_cleaner_run; exit 0; fi
 
