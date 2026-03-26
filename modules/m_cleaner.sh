@@ -104,4 +104,44 @@ setup_cron() {
     
     # Удаляем старое задание и ставим новое
     crontab -l 2>/dev/null | grep -v '--silent-clean' | crontab -
-    (crontab -l 2
+    (crontab -l 2>/dev/null; echo "$job") | crontab -
+    
+    echo -e "\n${GREEN}[✓] Автоочистка успешно настроена!${NC}"
+    echo -e "Время: ${CYAN}$(printf "%02d:%02d" "$c_hour" "$c_min" 2>/dev/null || echo "$c_hour:$c_min")${NC}, Дни недели: ${CYAN}${c_day}${NC}"
+    pause
+}
+
+menu_cleaner() {
+    while true; do
+        clear
+        echo -e "${BLUE}======================================================${NC}"
+        echo -e "${BOLD}${MAGENTA}  🧹 ОЧИСТКА СЕРВЕРА (МЕСТО НА ДИСКЕ)${NC}"
+        echo -e "${GRAY} Безопасное удаление системного мусора и логов.${NC}"
+        echo -e "${BLUE}======================================================${NC}"
+        echo -e " 💾 Текущее свободное место: ${GREEN}$(human_readable $(get_free_space))${NC}\n"
+        echo -e " ${GREEN}1.${NC} 🧹 Полная уборка (Максимум свободного места)"
+        echo -e " ${YELLOW}2.${NC} 📦 Очистить кэш APT"
+        echo -e " ${YELLOW}3.${NC} 📚 Очистить системные логи (Systemd)"
+        echo -e " ${YELLOW}4.${NC} 🐳 Очистить мусор Docker"
+        echo -e " ${YELLOW}5.${NC} 🗑️ Очистить временные файлы (/tmp)"
+        echo -e " ${YELLOW}6.${NC} 🧩 Очистить старые Snap пакеты"
+        echo -e "${BLUE}------------------------------------------------------${NC}"
+        echo -e " ${CYAN}7.${NC} 🔍 Анализ диска (Что занимает место?)"
+        
+        # Если крон уже настроен, добавляем зеленый индикатор к меню
+        if crontab -l 2>/dev/null | grep -q '--silent-clean'; then
+            echo -e " ${MAGENTA}8.${NC} ⏰ Настроить Автоочистку ${GREEN}[АКТИВНА]${NC}"
+        else
+            echo -e " ${MAGENTA}8.${NC} ⏰ Настроить Автоочистку (в Cron)"
+        fi
+        
+        echo -e " ${CYAN}0.${NC} ↩️  Назад"
+        read -p ">> " choice
+        case $choice in
+            1) run_with_diff "ПОЛНАЯ ОЧИСТКА СЕРВЕРА" clean_all_funcs ;;
+            2) run_with_diff "ОЧИСТКА КЭША APT" clean_apt ;; 3) run_with_diff "ОЧИСТКА ЖУРНАЛОВ" clean_journal ;;
+            4) run_with_diff "ОЧИСТКА DOCKER" clean_docker ;; 5) run_with_diff "ОЧИСТКА /TMP" clean_tmp ;;
+            6) run_with_diff "ОЧИСТКА SNAP" clean_snap ;; 7) analyze_disk ;; 8) setup_cron ;; 0) return ;;
+        esac
+    done
+}
