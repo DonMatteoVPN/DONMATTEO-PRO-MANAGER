@@ -2,7 +2,7 @@
 set -u
 
 # --- ТЕКУЩАЯ ВЕРСИЯ СКРИПТА ---
-export APP_VERSION="01.003"
+export APP_VERSION="01.004"
 export REPO_RAW="https://raw.githubusercontent.com/DonMatteoVPN/DONMATTEO-PRO-MANAGER/main"
 
 # Глобальные цвета
@@ -42,7 +42,6 @@ if [[ "${1:-}" == "--silent-clean" ]]; then silent_cleaner_run; exit 0; fi
 
 trap 'echo -e "\n${YELLOW}Возврат...${NC}"; sleep 1; return 2>/dev/null || exit 0' INT
 
-# ИСПРАВЛЕННЫЙ БЛОК:
 pause() { echo -e "\n${CYAN}Нажмите [Enter] для возврата...${NC}"; read -r < /dev/tty; }
 export -f pause
 
@@ -62,16 +61,13 @@ show_banner() {
 
 # --- ПРОВЕРКА ОБНОВЛЕНИЙ (БЕЗ КЭША) ---
 check_updates() {
-    # 1. Стучимся напрямую в API GitHub (Отдает моментально, кэш = 0)
     local API_URL="https://api.github.com/repos/DonMatteoVPN/DONMATTEO-PRO-MANAGER/contents/don"
     REMOTE_VERSION=$(curl -s --max-time 3 -H "Accept: application/vnd.github.v3.raw" "$API_URL" | grep -m 1 '^export APP_VERSION=' | cut -d'"' -f2 | tr -d '\r\n ')
     
-    # 2. У API есть лимит (60 раз в час). Если ты открыл меню 61 раз, скрипт незаметно перейдет на обычную ссылку
     if [[ -z "$REMOTE_VERSION" || ! "$REMOTE_VERSION" =~ ^[0-9]+\.[0-9]+$ ]]; then
         REMOTE_VERSION=$(curl -s --max-time 3 "${REPO_RAW}/don" | grep -m 1 '^export APP_VERSION=' | cut -d'"' -f2 | tr -d '\r\n ')
     fi
     
-    # Сравниваем версии
     if [[ -n "$REMOTE_VERSION" && "$REMOTE_VERSION" != "$APP_VERSION" && "$REMOTE_VERSION" =~ ^[0-9]+\.[0-9]+$ ]]; then
         export HAS_UPDATE="yes"
         export LATEST_VER="$REMOTE_VERSION"
@@ -93,6 +89,11 @@ main_menu() {
             echo -e "${YELLOW}======================================================${NC}"
         fi
 
+        # ПЕРВИЧНАЯ УСТАНОВКА ВЫНЕСЕНА НАВЕРХ
+        echo -e " ${GREEN}U.${NC} 🛠️  УСТАНОВКА И ИНИЦИАЛИЗАЦИЯ        "
+        echo -e "${BLUE}------------------------------------------------------${NC}"
+        
+        # ПОВСЕДНЕВНЫЕ ЗАДАЧИ
         echo -e " ${YELLOW}1.${NC} 🌐 Сетевой Экран (UFW)               ${NC}$(get_ufw_status)"
         echo -e " ${YELLOW}2.${NC} 🔑 Управление SSH (Порты)            "
         echo -e " ${YELLOW}3.${NC} 👮 Защита (Fail2Ban & Whitelist)     ${NC}$(get_f2b_status)"
@@ -101,19 +102,23 @@ main_menu() {
         echo -e " ${YELLOW}6.${NC} 🧹 Очистка Сервера (Место на диске)  "
         
         if [[ "$HAS_UPDATE" == "yes" ]]; then
+            echo -e "${BLUE}------------------------------------------------------${NC}"
             echo -e " ${GREEN}8.${NC} 🎁 ${BOLD}СКАЧАТЬ ОБНОВЛЕНИЕ ДО v${LATEST_VER}${NC}"
         fi
         
-        echo -e " ${GREEN}9.${NC} 🛠️  УСТАНОВКА И ИНИЦИАЛИЗАЦИЯ        "
         echo -e " ${RED}0.${NC} ❌ Выход                             "
         echo -e "${CYAN}======================================================${NC}"
         read -p "Выберите нужную категорию: " choice
         
         case $choice in
-            1) menu_ufw ;; 2) menu_ssh ;; 3) menu_fail2ban ;; 4) menu_trafficguard ;;
-            5) manage_swap ;; 6) menu_cleaner ;;
+            u|U) install_menu ;; # Обрабатывает как 'u', так и 'U'
+            1) menu_ufw ;; 
+            2) menu_ssh ;; 
+            3) menu_fail2ban ;; 
+            4) menu_trafficguard ;;
+            5) manage_swap ;; 
+            6) menu_cleaner ;;
             8) [[ "$HAS_UPDATE" == "yes" ]] && run_auto_update || echo -e "${RED}Обновлений нет.${NC}"; sleep 1 ;;
-            9) install_menu ;; 
             0) echo -e "${GREEN}Удачной работы! До связи! 💪${NC}"; exit 0 ;;
             *) echo -e "${RED}Ошибка: Неверный выбор.${NC}"; sleep 1 ;;
         esac
