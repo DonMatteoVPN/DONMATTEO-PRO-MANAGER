@@ -2,7 +2,7 @@
 set -u
 
 # --- ТЕКУЩАЯ ВЕРСИЯ СКРИПТА ---
-export APP_VERSION="01.008"
+export APP_VERSION="01.009"
 export REPO_RAW="https://raw.githubusercontent.com/DonMatteoVPN/DONMATTEO-PRO-MANAGER/main"
 
 # Глобальные цвета
@@ -31,7 +31,7 @@ if [[ $EUID -ne 0 ]]; then echo -e "${RED}Запустите команду от
 # --- Загрузка модулей ---
 for mod in m_ufw m_ssh m_f2b m_tg m_swap m_cleaner m_installer m_update; do
     if [[ -f "${MOD_DIR}/${mod}.sh" ]]; then
-        source "${MOD_DIR}/${mod}.sh"
+        source "${MOD_DIR}/${mod}.sh" || echo -e "${YELLOW}[!] Ошибка загрузки модуля ${mod}${NC}"
     else
         echo -e "${RED}Модуль ${mod} не найден! Переустановите менеджер.${NC}"
         exit 1
@@ -44,6 +44,26 @@ trap 'echo -e "\n${YELLOW}Возврат...${NC}"; sleep 1; return 2>/dev/null |
 
 pause() { echo -e "\n${CYAN}Нажмите [Enter] для возврата...${NC}"; read -r < /dev/tty; }
 export -f pause
+
+# ======================================================================
+# --- ФУНКЦИИ СТАТУСОВ (БРОНЕБОЙНЫЕ) ---
+# ======================================================================
+get_sysctl_status() {
+    if [[ "$(sysctl -n net.ipv4.tcp_syncookies 2>/dev/null)" == "1" ]]; then echo -e "${GREEN}[ВКЛЮЧЕНО]${NC}"; else echo -e "${RED}[НЕ УСТАНОВЛЕНО]${NC}"; fi
+}
+get_ufw_status() {
+    if ufw status 2>/dev/null | grep -qw active; then echo -e "${GREEN}[РАБОТАЕТ]${NC}"; else echo -e "${RED}[ВЫКЛЮЧЕН]${NC}"; fi
+}
+get_f2b_status() {
+    if systemctl is-active --quiet fail2ban; then echo -e "${GREEN}[РАБОТАЕТ]${NC}"; else echo -e "${RED}[НЕ УСТАНОВЛЕНО/ВЫКЛЮЧЕН]${NC}"; fi
+}
+get_tg_status() {
+    if systemctl is-active --quiet antiscan-aggregate.timer; then echo -e "${GREEN}[РАБОТАЕТ]${NC}"; elif [[ -f /usr/local/bin/traffic-guard ]]; then echo -e "${YELLOW}[УСТАНОВЛЕН, НО НЕ АКТИВЕН]${NC}"; else echo -e "${RED}[НЕ УСТАНОВЛЕНО]${NC}"; fi
+}
+get_swap_status() {
+    local swp=$(free -m 2>/dev/null | awk '/^Swap:/ {print $2}')
+    if [[ "$swp" != "0" && -n "$swp" ]]; then echo -e "${GREEN}[ВКЛЮЧЕНО: ${swp} MB]${NC}"; else echo -e "${RED}[ВЫКЛЮЧЕН]${NC}"; fi
+}
 
 show_banner() {
     echo -e "${CYAN}======================================================${NC}"
@@ -78,9 +98,7 @@ check_updates() {
 
 main_menu() {
     while true; do
-        # 🚀 ТЕПЕРЬ ПРОВЕРКА ИДЕТ ПРИ КАЖДОМ ВОЗВРАТЕ В МЕНЮ
         check_updates 
-        
         clear; show_banner
         
         if [[ "$HAS_UPDATE" == "yes" ]]; then
