@@ -33,11 +33,14 @@ show_prereq_instructions() {
     echo -e "    ${GREEN}real_ip_header proxy_protocol;${NC}\n"
 
     echo -e "${MAGENTA}======================================================================${NC}"
-    echo -e "${YELLOW} После этого перезапустите контейнер Nginx командой:${NC}"
-    echo -e "${CYAN} cd /opt/remnawave/ && docker compose up -d --force-recreate remnawave-nginx${NC}"
+    echo -e "${YELLOW} После этого ПЕРЕСОБЕРИТЕ контейнеры этой командой:${NC}"
+    echo -e "${CYAN} cd /opt/remnawave && docker builder prune -a -f && docker compose down && \\${NC}"
+    echo -e "${CYAN} docker compose build --no-cache && docker compose up -d && docker compose logs -f${NC}"
     echo -e "${MAGENTA}======================================================================${NC}"
     pause
 }
+
+# --- Остальные функции (install_sysctl, install_ufw, install_f2b, install_all) остаются без изменений ---
 
 install_sysctl() {
     echo -e "\n${CYAN}[*] Настройка параметров ядра (Sysctl)...${NC}"
@@ -59,14 +62,8 @@ EOF
 install_ufw() {
     echo -e "\n${CYAN}[*] Настройка UFW (Сетевой экран)...${NC}"
     apt-get install ufw -y >/dev/null 2>&1
-    
-    # Резервная копия перед инъекцией
     cp /etc/ufw/before.rules /etc/ufw/before.rules.bak
-    
-    # Удаляем старые правила (если были), чтобы не дублировать
     sed -i '/# --- НАЧАЛО: Правила защиты от DDoS/,/# --- КОНЕЦ: Направляем трафик/d' /etc/ufw/before.rules
-    
-    # Инъекция правил
     sed -i '/\*filter/a \
 # --- НАЧАЛО: Правила защиты от DDoS (DonMatteo) ---\n\
 :IN_LIMIT - [0:0]\n\
@@ -100,8 +97,7 @@ install_ufw() {
     ufw allow 6443/tcp comment 'VLESS Reality/XHTTP' >/dev/null 2>&1
     ufw allow from 193.23.216.20 to any port 2222 comment 'Remna Panel' >/dev/null 2>&1
     ufw --force enable >/dev/null 2>&1
-    
-    echo -e "${GREEN}[+] UFW успешно инициализирован и запущен.${NC}"
+    echo -e "${GREEN}[+] UFW успешно инициализирован.${NC}"
     pause
 }
 
@@ -109,22 +105,14 @@ install_f2b() {
     echo -e "\n${CYAN}[*] Установка Fail2Ban...${NC}"
     apt-get install fail2ban -y >/dev/null 2>&1
     cp /etc/fail2ban/jail.conf /etc/fail2ban/jail.local
-    
-    echo -e "${CYAN}[*] Создание фильтра nginx-scanners...${NC}"
     cat << 'EOF' > /etc/fail2ban/filter.d/nginx-scanners.conf
 [Definition]
 failregex = ^<HOST> \- \- \[.*\] "(GET|POST|HEAD|PROPFIND|OPTIONS|PUT|DELETE).*?" (400|401|403|404|405|444) 
 ignoreregex =
 EOF
-
-    echo -e "${CYAN}[*] Настройка клеток (Jails)...${NC}"
     sed -i 's/^banaction = .*/banaction = ufw/' /etc/fail2ban/jail.local
-    
-    # Удаляем старую секцию sshd и пишем новую
     sed -i '/^\[sshd\]/,/^\[/ { /^\[sshd\]/! { /^\[/! d } }' /etc/fail2ban/jail.local
     sed -i '/^\[sshd\]/a enabled = true\nport    = 2727\nbackend = systemd\nmaxretry = 3\nbantime = 12h' /etc/fail2ban/jail.local
-    
-    # Добавляем nginx клетку, если ее нет
     if ! grep -q "\[nginx-scanners\]" /etc/fail2ban/jail.local; then
         cat << 'EOF' >> /etc/fail2ban/jail.local
 
@@ -138,10 +126,8 @@ findtime = 600
 bantime  = 24h
 EOF
     fi
-
     systemctl enable fail2ban >/dev/null 2>&1
     systemctl restart fail2ban >/dev/null 2>&1
-    
     echo -e "${GREEN}[+] Fail2Ban установлен и запущен!${NC}"
     pause
 }
@@ -158,30 +144,21 @@ install_menu() {
         echo -e "${BLUE}======================================================${NC}"
         echo -e "${BOLD}${MAGENTA}  🛠️  УСТАНОВКА И ИНИЦИАЛИЗАЦИЯ${NC}"
         echo -e "${BLUE}======================================================${NC}"
-        
         echo -e " ${CYAN}Перед установкой защиты убедитесь, что ваш Nginx и Xray${NC}"
         echo -e " ${CYAN}настроены на передачу IP-адресов. Иначе защита не сработает!${NC}"
         echo -e " ${YELLOW}👉 Нажмите [5], чтобы прочитать инструкцию.${NC}\n"
-
         echo -e " ${GREEN}1.${NC} 🚀 Установить ВСЁ сразу (Sysctl + UFW + Fail2Ban)"
         echo -e "${BLUE}------------------------------------------------------${NC}"
         echo -e " ${YELLOW}2.${NC} Только защита ядра (Sysctl) $(get_sysctl_status)"
         echo -e " ${YELLOW}3.${NC} Только инициализация UFW    $(get_ufw_status)"
         echo -e " ${YELLOW}4.${NC} Только установка Fail2Ban   $(get_f2b_status)"
-        
         echo -e "${BLUE}------------------------------------------------------${NC}"
         echo -e " ${MAGENTA}${BOLD}5. 📖 ЧИТАТЬ ИНСТРУКЦИЮ (НАСТРОЙКА NGINX + XRAY)${NC}"
-        
         echo -e " ${CYAN}0.${NC} ↩️  Назад"
-        
         read -p ">> " choice
         case $choice in
-            1) install_all ;;
-            2) install_sysctl ;;
-            3) install_ufw ;;
-            4) install_f2b ;;
-            5) show_prereq_instructions ;;
-            0) return ;;
+            1) install_all ;; 2) install_sysctl ;; 3) install_ufw ;; 4) install_f2b ;;
+            5) show_prereq_instructions ;; 0) return ;;
             *) echo -e "${RED}Ошибка: Неверный выбор.${NC}"; sleep 1 ;;
         esac
     done
