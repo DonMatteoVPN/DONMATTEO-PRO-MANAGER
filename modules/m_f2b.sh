@@ -46,42 +46,25 @@ EOF
 }
 
 show_f2b_stats() {
-    clear
-    echo -e "${MAGENTA}======================================================${NC}"
-    echo -e "${BOLD}          🛡️  СУММАРНАЯ СТАТИСТИКА ЗАЩИТЫ${NC}"
-    echo -e "${MAGENTA}======================================================${NC}"
-
-    # --- БЛОК 1: FAIL2BAN (SSH) ---
-    local ssh_ban=$(fail2ban-client status sshd 2>/dev/null | grep "Currently banned" | awk '{print $4}' || echo "0")
-    local ssh_total=$(fail2ban-client status sshd 2>/dev/null | grep "Total banned" | awk '{print $4}' || echo "0")
-    local ssh_list=$(fail2ban-client status sshd 2>/dev/null | grep "Banned IP list" | cut -d: -f2 | sed 's/^[ \t]*//')
-
-    echo -e "${YELLOW}[ 🛡️  Защита SSH (Fail2Ban) ]${NC}"
-    echo -e "  └─ ⛔ Сейчас в бане (IP):      ${RED}${ssh_ban}${NC}"
-    echo -e "  └─ 💀 Всего банов (за сессию): ${ssh_total}"
-    echo -e "  └─ 🚫 Список IP: ${GRAY}${ssh_list:-Никого нет}${NC}\n"
-
-    # --- БЛОК 2: FAIL2BAN (NGINX) ---
-    local ngx_ban=$(fail2ban-client status nginx-scanners 2>/dev/null | grep "Currently banned" | awk '{print $4}' || echo "0")
-    local ngx_total=$(fail2ban-client status nginx-scanners 2>/dev/null | grep "Total banned" | awk '{print $4}' || echo "0")
-    local ngx_list=$(fail2ban-client status nginx-scanners 2>/dev/null | grep "Banned IP list" | cut -d: -f2 | sed 's/^[ \t]*//')
-
-    echo -e "${CYAN}[ 🛡️  Защита NGINX (Fail2Ban) ]${NC}"
-    echo -e "  └─ ⛔ Сейчас в бане (IP):      ${RED}${ngx_ban}${NC}"
-    echo -e "  └─ 💀 Всего банов (за сессию): ${ngx_total}"
-    echo -e "  └─ 🚫 Список IP: ${GRAY}${ngx_list:-Никого нет}${NC}\n"
-
-    # --- БЛОК 3: TRAFFICGUARD (ЯДРО) ---
-    local tg_subnets=$(ipset list SCANNERS-BLOCK-V4 2>/dev/null | grep "Number of entries" | awk '{print $4}' || echo "0")
-    local tg_hits=$(iptables -vnL SCANNERS-BLOCK 2>/dev/null | grep "DROP" | awk '{print $1}' | awk '{s+=$1} END {print s}' || echo "0")
-    local tg_manual=$(wc -l < "/opt/trafficguard-manual.list" 2>/dev/null || echo "0")
-
-    echo -e "${MAGENTA}[ 🛡️  TrafficGuard PRO (Kernel Level) ]${NC}"
-    echo -e "  └─ 📊 Заблокировано подсетей:  ${GREEN}${tg_subnets}${NC}"
-    echo -e "  └─ 🔥 Всего отбито атак:       ${RED}${tg_hits:-0} пакетов${NC}"
-    echo -e "  └─ 🧪 Ручных блокировок:       ${YELLOW}${tg_manual}${NC}"
-    
-    echo -e "${MAGENTA}======================================================${NC}"
+    clear; echo -e "${MAGENTA}=== СТАТИСТИКА БЛОКИРОВОК FAIL2BAN ===${NC}\n"
+    for jail in sshd nginx-scanners; do
+        local raw_status=$(fail2ban-client status "$jail" 2>/dev/null || echo "")
+        [[ -z "$raw_status" ]] && continue
+        
+        local cur_fail=$(echo "$raw_status" | grep "Currently failed:" | sed 's/[^0-9]*//g')
+        local tot_fail=$(echo "$raw_status" | grep "Total failed:" | sed 's/[^0-9]*//g')
+        local cur_ban=$(echo "$raw_status" | grep "Currently banned:" | sed 's/[^0-9]*//g')
+        local tot_ban=$(echo "$raw_status" | grep "Total banned:" | sed 's/[^0-9]*//g')
+        local banned_ips=$(echo "$raw_status" | grep "Banned IP list:" | awk -F':' '{print $2}' | xargs)
+        [[ -z "$banned_ips" ]] && banned_ips="Никого нет в бане"
+        
+        [[ "$jail" == "sshd" ]] && echo -e "${CYAN}[ 🛡️  Защита SSH (Брутфорс паролей) ]${NC}" || echo -e "${CYAN}[ 🛡️  Защита NGINX (Сканеры уязвимостей) ]${NC}"
+        echo -e "  └─ ⚠️  Ошибок прямо сейчас:         ${YELLOW}${cur_fail:-0}${NC}"
+        echo -e "  └─ 📈 Всего попыток взлома:        ${YELLOW}${tot_fail:-0}${NC}"
+        echo -e "  └─ ⛔ Сейчас в бане (IP):          ${RED}${cur_ban:-0}${NC}"
+        echo -e "  └─ 💀 Всего забанено за всё время: ${RED}${tot_ban:-0}${NC}"
+        echo -e "  └─ 🚫 Список заблокированных IP:   ${RED}${banned_ips}${NC}\n"
+    done
     pause
 }
 
