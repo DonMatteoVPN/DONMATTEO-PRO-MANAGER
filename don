@@ -2,7 +2,7 @@
 set -u
 
 # --- ТЕКУЩАЯ ВЕРСИЯ СКРИПТА ---
-export APP_VERSION="01.014"
+export APP_VERSION="01.015"
 export REPO_RAW="https://raw.githubusercontent.com/DonMatteoVPN/DONMATTEO-PRO-MANAGER/main"
 
 # Глобальные цвета
@@ -29,7 +29,7 @@ export MOD_DIR="/opt/remnawave/modules"
 if [[ $EUID -ne 0 ]]; then echo -e "${RED}Запустите команду от имени root (sudo).${NC}"; exit 1; fi
 
 # --- Загрузка модулей ---
-for mod in m_ufw m_ssh m_f2b m_tg m_swap m_cleaner m_installer m_update; do
+for mod in m_ufw m_ssh m_f2b m_tg m_swap m_cleaner m_installer m_update m_reali; do
     if [[ -f "${MOD_DIR}/${mod}.sh" ]]; then
         source "${MOD_DIR}/${mod}.sh" || echo -e "${YELLOW}[!] Ошибка загрузки модуля ${mod}${NC}"
     else
@@ -109,6 +109,7 @@ main_menu() {
         fi
 
         echo -e " ${GREEN}U.${NC} 🛠️  УСТАНОВКА И ИНИЦИАЛИЗАЦИЯ        "
+        echo -e " ${MAGENTA}R.${NC} 🛡️  REALITY SCANNER (Поиск доменов) ${NC}$(get_reali_status)"
         echo -e "${BLUE}------------------------------------------------------${NC}"
         echo -e " ${YELLOW}1.${NC} 🌐 Сетевой Экран (UFW)               ${NC}$(get_ufw_status)"
         echo -e " ${YELLOW}2.${NC} 🔑 Управление SSH (Порты)            "
@@ -128,6 +129,7 @@ main_menu() {
         
         case $choice in
             u|U) install_menu ;;
+            r|R) menu_reali ;;
             1) menu_ufw ;; 
             2) menu_ssh ;; 
             3) menu_fail2ban ;; 
