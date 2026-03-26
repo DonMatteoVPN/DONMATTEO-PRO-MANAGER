@@ -88,7 +88,7 @@ file_interaction() {
 
 inspect_directory() {
     local DIR=$1
-    local IS_SAFE_RM=$2 # Режимы: "truncate", "rm", "block"
+    local IS_SAFE_RM=$2 
     
     while true; do
         clear
@@ -96,7 +96,6 @@ inspect_directory() {
         echo -e "${CYAN}Текущая папка:${NC} $DIR"
         echo -e "${GRAY}Топ-10 самых тяжелых элементов внутри:${NC}\n"
         
-        # Получаем список файлов и папок с размерами
         du -sh "$DIR"/* 2>/dev/null | sort -hr | head -10 > /tmp/ad_tmp.txt
         
         if [ ! -s /tmp/ad_tmp.txt ]; then
@@ -160,11 +159,13 @@ analyze_disk() {
         local S_DOCKER=$(du -sh /var/lib/docker 2>/dev/null | awk '{print $1}')
         local S_APT=$(du -sh /var/cache/apt 2>/dev/null | awk '{print $1}')
         local S_TMP=$(du -sh /tmp 2>/dev/null | awk '{print $1}')
+        local S_NGINX=$(du -sh /opt/remnawave/nginx_logs 2>/dev/null | awk '{print $1}')
         
-        echo -e " ${YELLOW}1.${NC} 📚 /var/log         ${CYAN}[${S_LOG:-0}]${NC}  ${GRAY}(Безопасно очищать файлы)${NC}"
-        echo -e " ${YELLOW}2.${NC} 🐳 /var/lib/docker  ${CYAN}[${S_DOCKER:-0}]${NC}  ${GRAY}(Только просмотр, удалять ОПАСНО)${NC}"
-        echo -e " ${YELLOW}3.${NC} 📦 /var/cache/apt   ${CYAN}[${S_APT:-0}]${NC}  ${GRAY}(Безопасно удалять файлы)${NC}"
-        echo -e " ${YELLOW}4.${NC} 🗑️  /tmp             ${CYAN}[${S_TMP:-0}]${NC}  ${GRAY}(Безопасно удалять файлы)${NC}"
+        echo -e " ${YELLOW}1.${NC} 📚 /var/log                 ${CYAN}[${S_LOG:-0}]${NC}  ${GRAY}(Безопасно очищать файлы)${NC}"
+        echo -e " ${YELLOW}2.${NC} 🐳 /var/lib/docker          ${CYAN}[${S_DOCKER:-0}]${NC}  ${GRAY}(Только просмотр, удалять ОПАСНО)${NC}"
+        echo -e " ${YELLOW}3.${NC} 📦 /var/cache/apt           ${CYAN}[${S_APT:-0}]${NC}  ${GRAY}(Безопасно удалять файлы)${NC}"
+        echo -e " ${YELLOW}4.${NC} 🗑️  /tmp                     ${CYAN}[${S_TMP:-0}]${NC}  ${GRAY}(Безопасно удалять файлы)${NC}"
+        echo -e " ${YELLOW}5.${NC} 🌐 /opt/remnawave/nginx_logs ${CYAN}[${S_NGINX:-0}]${NC}  ${GRAY}(Логи панели)${NC}"
         echo -e "${BLUE}------------------------------------------------------${NC}"
         echo -e " ${CYAN}0.${NC} ↩️  Назад"
         
@@ -174,6 +175,7 @@ analyze_disk() {
             2) inspect_directory "/var/lib/docker" "block" ;;
             3) inspect_directory "/var/cache/apt" "rm" ;;
             4) inspect_directory "/tmp" "rm" ;;
+            5) inspect_directory "/opt/remnawave/nginx_logs" "truncate" ;;
             0) return ;;
         esac
     done
@@ -187,6 +189,69 @@ clean_all_funcs() {
     if command -v docker &>/dev/null; then echo -e "${BLUE}[i] Очистка Docker...${NC}"; docker system prune -a -f; fi
     echo -e "${BLUE}[i] Очистка /tmp...${NC}"; rm -rf /tmp/* /var/tmp/* ~/.cache/* 2>/dev/null || true
     if command -v snap &>/dev/null; then echo -e "${BLUE}[i] Очистка Snap...${NC}"; snap set system refresh.retain=2 2>/dev/null || true; while read -r snapname revision; do [[ -n "$snapname" ]] && snap remove "$snapname" --revision="$revision"; done < <(snap list all 2>/dev/null | awk '/disabled/{print $1, $3}'); fi
+}
+
+# --- НОВЫЙ БЛОК: РОТАЦИЯ ЛОГОВ ---
+manage_logrotate() {
+    while true; do
+        clear
+        echo -e "${MAGENTA}=== УМНАЯ РОТАЦИЯ ЛОГОВ NGINX ===${NC}"
+        echo -e "${GRAY}Защищает сервер от переполнения диска логами Docker.${NC}\n"
+        
+        if [ -f /etc/logrotate.d/remnawave-nginx ]; then
+            echo -e " Статус: ${GREEN}[ПРАВИЛО АКТИВНО]${NC}\n"
+        else
+            echo -e " Статус: ${RED}[НЕ НАСТРОЕНО]${NC}\n"
+        fi
+        
+        echo -e "${CYAN}Как работает встроенный алгоритм:${NC}"
+        echo -e "1. Системные логи Linux ротируются сами по себе."
+        echo -e "2. Но логи, которые мы собираем из Docker в ${CYAN}/opt/remnawave/nginx_logs${NC},"
+        echo -e "   система 'не видит'. Поэтому мы создаем для них специальное правило."
+        echo -e "3. Как только лог достигает ${YELLOW}50 MB${NC}, он сжимается в архив (zip)."
+        echo -e "4. Хранится только ${YELLOW}3${NC} последних архива, старые удаляются."
+        echo -e "5. Скрипт посылает команду в Docker, чтобы Nginx начал писать в новый файл.\n"
+        
+        echo -e " ${GREEN}1.${NC} 🛠️ Установить / Обновить правило ротации"
+        echo -e " ${YELLOW}2.${NC} 🚀 Принудительно запустить ротацию логов прямо сейчас"
+        echo -e " ${RED}3.${NC} 🗑️ Удалить правило ротации"
+        echo -e "${BLUE}------------------------------------------------------${NC}"
+        echo -e " ${CYAN}0.${NC} ↩️  Назад"
+        
+        read -p ">> " lr_choice
+        case $lr_choice in
+            1)
+                cat << 'EOF' > /etc/logrotate.d/remnawave-nginx
+/opt/remnawave/nginx_logs/*.log {
+    size 50M
+    rotate 3
+    missingok
+    compress
+    delaycompress
+    notifempty
+    create 0644 root root
+    postrotate
+        docker exec remnawave-nginx nginx -s reload > /dev/null 2>/dev/null || true
+    endscript
+}
+EOF
+                echo -e "\n${GREEN}[+] Правило успешно создано в /etc/logrotate.d/remnawave-nginx!${NC}"
+                pause
+                ;;
+            2)
+                echo -e "\n${CYAN}[*] Запуск принудительной ротации...${NC}"
+                logrotate -f /etc/logrotate.conf
+                echo -e "${GREEN}[+] Ротация выполнена! Можете проверить архивы в меню Анализа Диска.${NC}"
+                pause
+                ;;
+            3)
+                rm -f /etc/logrotate.d/remnawave-nginx
+                echo -e "\n${GREEN}[+] Правило ротации логов удалено.${NC}"
+                pause
+                ;;
+            0) return ;;
+        esac
+    done
 }
 
 setup_cron() {
@@ -266,13 +331,25 @@ menu_cleaner() {
             echo -e " ${MAGENTA}8.${NC} ⏰ Настроить Автоочистку (в Cron)"
         fi
         
+        if [ -f /etc/logrotate.d/remnawave-nginx ]; then
+            echo -e " ${MAGENTA}9.${NC} 🔄 Ротация логов Nginx   ${GREEN}[АКТИВНА]${NC}"
+        else
+            echo -e " ${MAGENTA}9.${NC} 🔄 Ротация логов Nginx   ${GRAY}(Защита от переполнения)${NC}"
+        fi
+        
         echo -e " ${CYAN}0.${NC} ↩️  Назад"
         read -p ">> " choice
         case $choice in
             1) run_with_diff "ПОЛНАЯ ОЧИСТКА СЕРВЕРА" clean_all_funcs ;;
-            2) run_with_diff "ОЧИСТКА КЭША APT" clean_apt ;; 3) run_with_diff "ОЧИСТКА ЖУРНАЛОВ" clean_journal ;;
-            4) run_with_diff "ОЧИСТКА DOCKER" clean_docker ;; 5) run_with_diff "ОЧИСТКА /TMP" clean_tmp ;;
-            6) run_with_diff "ОЧИСТКА SNAP" clean_snap ;; 7) analyze_disk ;; 8) setup_cron ;; 0) return ;;
+            2) run_with_diff "ОЧИСТКА КЭША APT" clean_apt ;; 
+            3) run_with_diff "ОЧИСТКА ЖУРНАЛОВ" clean_journal ;;
+            4) run_with_diff "ОЧИСТКА DOCKER" clean_docker ;; 
+            5) run_with_diff "ОЧИСТКА /TMP" clean_tmp ;;
+            6) run_with_diff "ОЧИСТКА SNAP" clean_snap ;; 
+            7) analyze_disk ;; 
+            8) setup_cron ;; 
+            9) manage_logrotate ;;
+            0) return ;;
         esac
     done
 }
