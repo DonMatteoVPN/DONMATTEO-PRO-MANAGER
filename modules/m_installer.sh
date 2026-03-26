@@ -34,13 +34,12 @@ show_prereq_instructions() {
 
     echo -e "${MAGENTA}======================================================================${NC}"
     echo -e "${YELLOW} После этого ПЕРЕСОБЕРИТЕ контейнеры этой командой:${NC}"
-    echo -e "${CYAN} cd /opt/remnawave && docker builder prune -a -f && docker compose down && \\${NC}"
-    echo -e "${CYAN} docker compose build --no-cache && docker compose up -d && docker compose logs -f${NC}"
+    echo -e "${CYAN} cd /opt/remnawave && docker builder prune -a -f && docker compose down && docker compose build --no-cache && docker compose up -d && docker compose logs -f${NC}"
     echo -e "${MAGENTA}======================================================================${NC}"
     pause
 }
 
-# --- Остальные функции (install_sysctl, install_ufw, install_f2b, install_all) остаются без изменений ---
+# --- Остальные функции остаются без изменений ---
 
 install_sysctl() {
     echo -e "\n${CYAN}[*] Настройка параметров ядра (Sysctl)...${NC}"
