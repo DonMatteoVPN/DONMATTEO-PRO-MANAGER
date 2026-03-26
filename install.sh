@@ -3,7 +3,6 @@
 # Установщик DONMATTEO PRO MANAGER
 # ======================================================================
 
-# Ссылка на RAW файлы твоего репозитория
 REPO_URL="https://raw.githubusercontent.com/DonMatteoVPN/DONMATTEO-PRO-MANAGER/main"
 
 RED='\033[0;31m'
@@ -23,14 +22,15 @@ mkdir -p /opt/remnawave/modules
 
 echo -e "${CYAN}[*] Скачивание главного ядра (don)...${NC}"
 curl -sL "${REPO_URL}/don" -o /usr/local/bin/don
+sed -i 's/\r$//' /usr/local/bin/don # <--- АВТООЧИСТКА ВИНДОВС-СИМВОЛОВ
 chmod +x /usr/local/bin/don
 
 echo -e "${CYAN}[*] Скачивание модулей...${NC}"
-# Добавлен новый модуль m_update.sh
 MODULES=("m_ufw.sh" "m_ssh.sh" "m_f2b.sh" "m_tg.sh" "m_swap.sh" "m_cleaner.sh" "m_installer.sh" "m_update.sh")
 
 for mod in "${MODULES[@]}"; do
     curl -sL "${REPO_URL}/modules/${mod}" -o "/opt/remnawave/modules/${mod}"
+    sed -i 's/\r$//' "/opt/remnawave/modules/${mod}" # <--- АВТООЧИСТКА ВИНДОВС-СИМВОЛОВ
 done
 
 clear
