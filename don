@@ -62,7 +62,9 @@ show_banner() {
 
 # --- ПРОВЕРКА ОБНОВЛЕНИЙ ---
 check_updates() {
-    REMOTE_VERSION=$(curl -s --max-time 2 "${REPO_RAW}/don" | grep -oP '^export APP_VERSION="\K[^"]+')
+    # Добавляем ?t=$(date +%s) чтобы GitHub не отдавал нам кэшированный старый файл
+    REMOTE_VERSION=$(curl -s --max-time 3 "${REPO_RAW}/don?t=$(date +%s)" | grep -m 1 'APP_VERSION=' | cut -d'"' -f2)
+    
     if [[ -n "$REMOTE_VERSION" && "$REMOTE_VERSION" != "$APP_VERSION" ]]; then
         export HAS_UPDATE="yes"
         export LATEST_VER="$REMOTE_VERSION"
