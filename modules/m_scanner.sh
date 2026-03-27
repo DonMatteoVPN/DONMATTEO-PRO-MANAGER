@@ -43,15 +43,14 @@ show_geo_help() {
     echo -e "${GRAY}SE - Швеция    | CH - Швейцария  | ES - Испания  | TR - Турция${NC}\n"
 }
 
-# --- 2. УМНЫЙ АНАЛИЗАТОР (ЧИТАЕТ НОВУЮ КОЛОНКУ ПОРТОВ) ---
+# --- 2. УМНЫЙ АНАЛИЗАТОР (СОРТИРОВКА И ВЕСА СЕРТИФИКАТОВ) ---
 analyze_results() {
     local file=$1
     [[ ! -f "$file" ]] && { echo -e "${RED}[!] Файл $file не найден.${NC}"; return; }
 
     local total_lines=$(wc -l < "$file" 2>/dev/null)
     if [[ "$total_lines" -le 1 ]]; then
-        echo -e "\n${RED}[!] Сканер ничего не нашел. Цель мертва, либо не поддерживает TLS 1.3 и HTTP/2.${NC}"
-        echo -e "${YELLOW}Подсказка: Сканировать свой собственный IP бесполезно. Сканируйте ПОДСЕТИ (CIDR), чтобы найти соседей!${NC}"
+        echo -e "\n${RED}[!] В отчете пусто. Сканер ничего не нашел.${NC}"
         pause; return
     fi
 
@@ -59,6 +58,11 @@ analyze_results() {
     echo -e "${MAGENTA}======================================================${NC}"
     echo -e "${BOLD}🤖 АНАЛИЗАТОР: ОТБОР ИДЕАЛЬНЫХ SNI КАНДИДАТОВ${NC}"
     echo -e "${MAGENTA}======================================================${NC}"
+    echo -e "${CYAN}💡 На чем основывается наш ТОП?${NC}"
+    echo -e "${GRAY}1. Корпоративные сертификаты (Google, Apple, DigiCert) - Высший приоритет.${NC}"
+    echo -e "${GRAY}   Они сливаются с трафиком крупных IT-компаний и банков.${NC}"
+    echo -e "${GRAY}2. Cloudflare / GlobalSign / Sectigo - Средний приоритет.${NC}"
+    echo -e "${GRAY}3. Let's Encrypt / ZeroSSL - Низший приоритет (слишком часто банятся).${NC}\n"
     
     local my_ip=$(curl -s --max-time 3 ipinfo.io/ip 2>/dev/null)
     local my_geo=$(curl -s --max-time 3 ipinfo.io/country 2>/dev/null | tr -d '[:space:]')
@@ -66,48 +70,61 @@ analyze_results() {
     echo -e "${CYAN}[*] Ваш текущий сервер:${NC} $my_ip ${YELLOW}($my_geo)${NC}"
     show_geo_help
     
-    echo -e "${GRAY}Для лучшей маскировки укажите код страны, чтобы отфильтровать мусор.${NC}"
-    read -p ">> Страна (Enter = Использовать $my_geo, 'n' = Без фильтра): " user_geo
+    read -p ">> Фильтр по Стране (Enter = Искать в $my_geo, 'n' = Искать везде): " user_geo
     
     local target_geo=""
     if [[ -z "$user_geo" ]]; then target_geo="$my_geo"
     elif [[ "$user_geo" != "n" && "$user_geo" != "N" ]]; then target_geo=$(echo "$user_geo" | tr '[:lower:]' '[:upper:]')
     fi
 
-    echo -e "\n${CYAN}Фильтрация файла: $(basename "$file")...${NC}"
+    echo -e "\n${CYAN}Анализ и сортировка файла: $(basename "$file")...${NC}"
     
-    # Отбираем только надежные сертификаты
-    local filtered=$(awk -F, 'NR>1 && $4 ~ /Let'\''s Encrypt|Google|DigiCert|Cloudflare|Sectigo|GlobalSign/' "$file")
+    # МАГИЯ AWK: Читаем файл, назначаем веса сертификатам и сортируем
+    # Вес 1 (Лучший), Вес 4 (Худший)
+    local sorted_data=$(awk -F, -v target_geo="$target_geo" '
+    NR>1 {
+        issuer = tolower($4);
+        weight = 5;
+        if (issuer ~ /google|apple|microsoft/) weight = 1;
+        else if (issuer ~ /digicert|globalsign|sectigo/) weight = 2;
+        else if (issuer ~ /cloudflare/) weight = 3;
+        else if (issuer ~ /let'\''s encrypt|zerossl/) weight = 4;
+        
+        # Если задан фильтр гео, и он не совпадает - пропускаем
+        if (target_geo != "" && $5 != target_geo) next;
+        
+        # Печатаем вес в начало строки для сортировки
+        if (weight < 5) {
+            port = $6 ? $6 : "443";
+            print weight "|" $3 "|" $1 "|" port "|" $5 "|" $4;
+        }
+    }' "$file" | sort -t'|' -k1,1n | uniq)
 
-    # Жесткий фильтр по ГЕО
-    if [[ -n "$target_geo" ]]; then
-        local geo_matched=$(echo "$filtered" | awk -F, -v geo="$target_geo" '$5 == geo')
-        if [[ -n "$geo_matched" ]]; then
-            filtered="$geo_matched"
-            echo -e "${GREEN}[+] Найдены домены в локации: $target_geo${NC}"
-        else
-            echo -e "${RED}[!] В локации $target_geo ничего не найдено с надежным сертификатом.${NC}"
-            echo -e "${YELLOW}Показываю лучшие варианты без учета ГЕО...${NC}"
-        fi
-    fi
-
-    local best=$(echo "$filtered" | head -n 10)
+    local best=$(echo "$sorted_data" | head -n 15)
 
     if [[ -z "$best" ]]; then
-        echo -e "${YELLOW}Идеальных целей (TLS 1.3 + Trusted Issuer) не найдено.${NC}"
+        echo -e "${YELLOW}Идеальных целей (с нужным ГЕО и надежным сертификатом) не найдено.${NC}"
+        echo -e "${GRAY}Все необработанные данные сохранены в файле (Пункт 8).${NC}"
     else
-        echo -e "\n${GREEN}🏆 ТОП ИДЕАЛЬНЫХ SNI КАНДИДАТОВ:${NC}"
+        echo -e "\n${GREEN}🏆 ТОП-15 ИДЕАЛЬНЫХ SNI КАНДИДАТОВ:${NC}"
         echo -e "${BLUE}------------------------------------------------------${NC}"
-        # Выводим с поддержкой новой колонки "ПОРТ" ($6), если её нет — пишем 443
-        echo "$best" | awk -F',' '{
-            port = $6 ? $6 : "443";
-            print "📍 \033[1;32m" $3 "\033[0m\n   └─ IP: " $1 " (Порт: \033[1;36m" port "\033[0m) | ГЕО: \033[1;33m" $5 "\033[0m | Издатель: " $4 "\n"
-        }'
+        
+        echo "$best" | while IFS='|' read -r weight domain ip port geo issuer; do
+            # Подкрашиваем вывод в зависимости от веса (качества сертификата)
+            if [[ "$weight" == "1" ]]; then
+                echo -e "💎 \033[1;36m$domain\033[0m" # Голубой для элиты
+            elif [[ "$weight" == "2" || "$weight" == "3" ]]; then
+                echo -e "📍 \033[1;32m$domain\033[0m" # Зеленый для хороших
+            else
+                echo -e "🔸 \033[0;32m$domain\033[0m" # Темно-зеленый для Let's Encrypt
+            fi
+            echo -e "   └─ IP: $ip (Порт: \033[1;36m$port\033[0m) | ГЕО: \033[1;33m$geo\033[0m | Издатель: $issuer\n"
+        done
     fi
     pause
 }
 
-# --- 3. ИНТЕРАКТИВНЫЙ ЗАПУСК С МУЛЬТИ-ПОРТАМИ ---
+# --- 3. ИНТЕРАКТИВНЫЙ ЗАПУСК С ЛИМИТАМИ И ТЕГАМИ ---
 run_scanner() {
     local mode=$1
     local target=$2
@@ -117,65 +134,40 @@ run_scanner() {
     
     if [[ -z "$target" ]]; then
         echo -e "\n${CYAN}[*] Ваш IP-адрес: ${YELLOW}$my_ip${NC}"
-        echo -e "${GRAY}💡 Чтобы найти SNI-маскировку, сканируйте подсеть ваших соседей: ${GREEN}$my_subnet${NC}"
+        echo -e "${GRAY}💡 Чтобы найти SNI, сканируйте подсеть ваших соседей: ${GREEN}$my_subnet${NC}"
         read -p ">> Введите цель (Enter = сканировать соседей $my_subnet): " input_target
         target=${input_target:-$my_subnet}
     fi
 
-    # Защита от бесконечности для одиночного IP
-    if [[ "$mode" == "addr" && "$target" =~ ^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
-        target="${target}/32"
-    fi
-
-    local safe_target=$(echo "$target" | sed 's/[^a-zA-Z0-9]/_/g' | cut -c 1-20)
-    local out_file="scan_${mode}_${safe_target}_$(date +%s).csv"
+    if [[ "$mode" == "addr" && "$target" =~ ^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$ ]]; then target="${target}/32"; fi
 
     clear
     echo -e "${MAGENTA}======================================================${NC}"
-    echo -e "${BOLD} ⚙️  ПОДРОБНАЯ НАСТРОЙКА СКАНИРОВАНИЯ${NC}"
+    echo -e "${BOLD} ⚙️  ТОНКАЯ НАСТРОЙКА СКАНИРОВАНИЯ${NC}"
     echo -e "${MAGENTA}======================================================${NC}"
     echo -e "${CYAN}Цель:${NC} $target (Режим: -$mode)\n"
 
-    echo -e "${YELLOW}1. Целевые порты (-port)${NC}"
-    echo -e "${GRAY}Обычно Reality работает на 443 порту. Вы можете указать несколько портов через${NC}"
-    echo -e "${GRAY}запятую (например: 443, 8443, 6443), и скрипт просканирует их все по очереди!${NC}"
-    read -p ">> Порт(ы) (Enter = 443): " s_port
+    read -p ">> Порт(ы) через запятую (Enter = 443): " s_port
     s_port=${s_port:-443}
-    # Разбиваем порты в массив
     IFS=',' read -ra PORT_ARRAY <<< "${s_port// /}"
 
-    echo -e "\n${YELLOW}2. Количество потоков (-thread)${NC}"
-    echo -e "${GRAY}Сколько IP проверять одновременно. Больше = быстрее, но может перегрузить сервер.${NC}"
-    read -p ">> Потоков (Enter = 10, макс 50): " s_thread
-    s_thread=${s_thread:-10}
+    read -p ">> Потоков (Enter = 10, макс 50): " s_thread; s_thread=${s_thread:-10}
+    read -p ">> Таймаут в сек (Enter = 5): " s_timeout; s_timeout=${s_timeout:-5}
+    
+    echo -e "\n${YELLOW}💡 Лимит поиска${NC}"
+    echo -e "${GRAY}Чтобы не сканировать бесконечно, скрипт может остановиться, когда найдет нужное${NC}"
+    echo -e "${GRAY}количество рабочих доменов (например, 50).${NC}"
+    read -p ">> Сколько SNI найти? (Enter = 50, 0 = Без лимита): " s_limit
+    s_limit=${s_limit:-50}
 
-    echo -e "\n${YELLOW}3. Таймаут ответа (-timeout)${NC}"
-    echo -e "${GRAY}Сколько секунд ждать ответа. Для нестабильных или далеких сетей лучше ставить 10.${NC}"
-    read -p ">> Таймаут в сек (Enter = 5): " s_timeout
-    s_timeout=${s_timeout:-5}
-
-    echo -e "\n${YELLOW}4. Поддержка IPv6 (-46)${NC}"
-    echo -e "${GRAY}Искать цели на новых IPv6 адресах. Если ваш сервер их не поддерживает - не включайте.${NC}"
-    read -p ">> Включить сканирование IPv6? (y/N, Enter = Нет): " s_ipv6
-    s_ipv6=${s_ipv6:-n}
-
-    echo -e "\n${YELLOW}5. Подробный вывод (Verbose -v)${NC}"
-    echo -e "${GRAY}Показывать на экране все неудачные попытки и 'мусор'. Если отключить (Нет),${NC}"
-    echo -e "${GRAY}экран будет чистым, и вы увидите только успешные находки.${NC}"
-    read -p ">> Включить подробный вывод логов? (y/N, Enter = Нет): " s_verb
-    s_verb=${s_verb:-n}
-
-    local extra_args=""
-    [[ "$s_ipv6" == "y" || "$s_ipv6" == "Y" ]] && extra_args+=" -46"
-    [[ "$s_verb" == "y" || "$s_verb" == "Y" ]] && extra_args+=" -v"
-
-    # Проверка на Infinity Mode с несколькими портами
-    if [[ ${#PORT_ARRAY[@]} -gt 1 && "$mode" == "addr" && ! "$target" =~ / ]]; then
-        echo -e "\n${RED}⚠️ ВНИМАНИЕ: Вы выбрали режим Бесконечного Поиска (Infinity Mode).${NC}"
-        echo -e "${RED}В этом режиме скрипт никогда не остановится, поэтому проверка нескольких портов невозможна.${NC}"
-        echo -e "${YELLOW}Будет проверен только первый порт: ${PORT_ARRAY[0]}${NC}"
-        PORT_ARRAY=(${PORT_ARRAY[0]})
-    fi
+    echo -e "\n${YELLOW}💡 Имя файла (Тег)${NC}"
+    read -p ">> Добавить метку к имени файла (напр. Hetzner, FI) [Enter = пропустить]: " s_tag
+    
+    local safe_target=$(echo "$target" | sed 's/[^a-zA-Z0-9]/_/g' | cut -c 1-15)
+    local safe_tag=$(echo "$s_tag" | sed 's/[^a-zA-Z0-9]/_/g')
+    local out_file=""
+    if [[ -n "$safe_tag" ]]; then out_file="scan_${safe_tag}_${safe_target}_$(date +%s).csv"
+    else out_file="scan_${safe_target}_$(date +%s).csv"; fi
 
     echo -e "\n${GREEN}[*] Запуск сканирования...${NC}"
     echo -e "${YELLOW}(Нажмите Ctrl+C, когда захотите прервать скан)${NC}\n"
@@ -183,25 +175,44 @@ run_scanner() {
     cd "$SCANNER_DIR" || return
     export PATH=/usr/local/go/bin:$PATH
     
-    # Создаем общий CSV файл с кастомным заголовком (добавляем PORT)
     echo "IP,ORIGIN,CERT_DOMAIN,CERT_ISSUER,GEO_CODE,PORT" > "$SCANNER_DIR/$out_file"
 
-    # МАГИЯ: Цикл по всем указанным портам
     for current_port in "${PORT_ARRAY[@]}"; do
         echo -e "${MAGENTA}>>> СКАНИРОВАНИЕ ПОРТА: ${current_port} <<<${NC}"
         local tmp_csv="tmp_scan_${current_port}.csv"
         
-        ./RealiTLScanner -"$mode" "$target" -port "$current_port" -thread "$s_thread" -timeout "$s_timeout" -out "$tmp_csv" $extra_args
+        # Запускаем сканер в ФОНОВОМ режиме
+        ./RealiTLScanner -"$mode" "$target" -port "$current_port" -thread "$s_thread" -timeout "$s_timeout" -out "$tmp_csv" >/dev/null 2>&1 &
+        local SCAN_PID=$!
+        
+        # Перехват Ctrl+C
+        trap 'kill $SCAN_PID 2>/dev/null; echo -e "\n${YELLOW}Остановлено пользователем.${NC}"; break' INT
 
-        # Если временный файл создался, забираем из него данные (без заголовка) и дописываем порт
+        # Процесс-наблюдатель для лимита
+        if [[ "$s_limit" -gt 0 ]]; then
+            while kill -0 $SCAN_PID 2>/dev/null; do
+                local current_count=$(wc -l < "$tmp_csv" 2>/dev/null || echo 0)
+                if [[ "$current_count" -ge "$s_limit" ]]; then
+                    echo -e "${GREEN}[+] Лимит ($s_limit) достигнут! Останавливаем сканер...${NC}"
+                    kill $SCAN_PID 2>/dev/null
+                    break
+                fi
+                sleep 2
+            done
+        else
+            wait $SCAN_PID
+        fi
+        trap - INT # Сброс перехвата Ctrl+C
+
+        # Склеиваем временный файл с основным, добавляя порт
         if [[ -f "$tmp_csv" ]]; then
             tail -n +2 "$tmp_csv" | awk -v p="$current_port" -F',' '{print $0","p}' >> "$SCANNER_DIR/$out_file"
             rm -f "$tmp_csv"
         fi
     done
 
-    echo -e "\n${GREEN}[+] Сканирование всех портов завершено!${NC}"
-    echo -e "Единый результат сохранен в файл: ${CYAN}$out_file${NC}"
+    echo -e "\n${GREEN}[+] Сканирование завершено! Все сырые данные сохранены.${NC}"
+    echo -e "Файл: ${CYAN}$out_file${NC}"
     analyze_results "$SCANNER_DIR/$out_file"
 }
 
@@ -210,12 +221,13 @@ manage_reports() {
     while true; do
         clear
         echo -e "${MAGENTA}=== 📂 МЕНЕДЖЕР СОХРАНЕННЫХ ОТЧЕТОВ ===${NC}"
+        echo -e "${GRAY}Файлы содержат АБСОЛЮТНО ВСЕ результаты сканирования.${NC}"
+        echo -e "${GRAY}Вы можете прогонять Умный Анализ (a1, a2) по ним сколько угодно раз.${NC}\n"
         
         mapfile -t CSV_FILES < <(ls -1t "$SCANNER_DIR"/*.csv 2>/dev/null)
         
         if [[ ${#CSV_FILES[@]} -eq 0 ]]; then
-            echo -e "${YELLOW}Отчетов пока нет. Запустите сканирование.${NC}"
-            pause; return
+            echo -e "${YELLOW}Отчетов пока нет. Запустите сканирование.${NC}"; pause; return
         fi
 
         for i in "${!CSV_FILES[@]}"; do
@@ -224,9 +236,9 @@ manage_reports() {
             echo -e " ${YELLOW}$((i+1)).${NC} ${CYAN}$f_name${NC} ${GRAY}($f_size)${NC}"
         done
 
-        echo -e "${BLUE}------------------------------------------------------${NC}"
+        echo -e "\n${BLUE}------------------------------------------------------${NC}"
         echo -e " 👉 ${YELLOW}НОМЕР${NC} - Посмотреть сырую таблицу CSV."
-        echo -e " 👉 ${GREEN}aНОМЕР${NC} (напр. ${BOLD}a1${NC}) - Запустить Умный Анализ SNI."
+        echo -e " 👉 ${GREEN}aНОМЕР${NC} (напр. ${BOLD}a1${NC}) - Запустить Умный Анализ SNI (Фильтрация)."
         echo -e " 👉 ${RED}dНОМЕР${NC} (напр. ${BOLD}d1${NC}) - Удалить отчет."
         echo -e " ${CYAN}0.${NC} Назад"
         
@@ -242,7 +254,11 @@ manage_reports() {
             [[ -n "${CSV_FILES[$idx]}" ]] && analyze_results "${CSV_FILES[$idx]}"
         elif [[ "$r_choice" =~ ^[0-9]+$ ]]; then
             local idx=$((r_choice-1))
-            [[ -n "${CSV_FILES[$idx]}" ]] && column -t -s ',' "${CSV_FILES[$idx]}" | less -S
+            if [[ -n "${CSV_FILES[$idx]}" ]]; then
+                echo -e "${YELLOW}💡 Подсказка: Для выхода из просмотра таблицы нажмите клавишу 'q' на клавиатуре.${NC}"
+                sleep 2
+                column -t -s ',' "${CSV_FILES[$idx]}" | less -S
+            fi
         else
             echo -e "${RED}Неверный ввод.${NC}"; sleep 1
         fi
