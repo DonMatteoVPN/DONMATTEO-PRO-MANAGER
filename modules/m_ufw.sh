@@ -16,9 +16,10 @@ get_ufw_status() {
     if ufw status | grep -qw active; then echo -e "${GREEN}[РАБОТАЕТ]${NC}"; else echo -e "${RED}[ВЫКЛЮЧЕН]${NC}"; fi
 }
 
-# Функция получения статуса логирования
 get_ufw_log_status() {
-    if ufw status verbose | grep -q "logging: on"; then
+    # LANG=C заставляет UFW отвечать на английском, чтобы grep точно нашел слово
+    # -i делает поиск нечувствительным к регистру (Logging или logging)
+    if LANG=C ufw status verbose | grep -iq "logging: on"; then
         echo -e "${GREEN}[ВКЛЮЧЕНЫ]${NC}"
     else
         echo -e "${RED}[ВЫКЛЮЧЕНЫ]${NC}"
