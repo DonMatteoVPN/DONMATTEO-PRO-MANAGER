@@ -11,6 +11,9 @@ RECON_DIR="$SCANNER_DIR/recon"
 check_scanner_install() {
     export PATH=/usr/local/go/bin:$PATH
     mkdir -p "$RECON_DIR" 2>/dev/null
+    
+    # Очистка от старого мусора (убиваем дефолтный out.csv)
+    rm -f "$SCANNER_DIR/out.csv" 2>/dev/null
 
     if [[ ! -f "$SCANNER_BIN" ]]; then
         echo -e "${YELLOW}[*] Сканер не найден. Начинаю установку (Go 1.22+)...${NC}"
@@ -121,13 +124,15 @@ run_single_scan() {
     cd "$SCANNER_DIR" || return
     export PATH=/usr/local/go/bin:$PATH
     
-    # Перехват Ctrl+C для выхода из цикла портов
     trap 'echo -e "\n${YELLOW}🛑 Процесс прерван пользователем. Формируем досье...${NC}"; break' INT
 
     for current_port in "${PORT_ARRAY[@]}"; do
         REPORT_OUTPUT+=" >>> СКАНИРОВАНИЕ ПОРТА: ${current_port} <<<${nl}"
         
-        local scan_log=$(./RealiTLScanner -addr "$target" -port "$current_port" -timeout 5 -v 2>&1)
+        local tmp_ghost="tmp_ghost_${current_port}.csv"
+        local scan_log=$(./RealiTLScanner -addr "$target" -port "$current_port" -timeout 5 -v -out "$tmp_ghost" 2>&1)
+        rm -f "$tmp_ghost" 2>/dev/null # Уничтожаем призрачный файл
+        
         local found_info=false
         
         while read -r line; do
@@ -169,7 +174,7 @@ run_single_scan() {
             REPORT_OUTPUT+=" ❌ Нет ответа. Возможно, цель блокирует сканирование.${nl}"
         fi
     done
-    trap - INT # Возвращаем Ctrl+C в норму
+    trap - INT
     
     clear
     echo "$REPORT_OUTPUT" | sed -e "s/ПОДХОДИТ ДЛЯ REALITY/$(printf '\033[1;32m')&$(printf '\033[0m')/" \
@@ -198,7 +203,6 @@ run_mass_recon() {
     echo -e "${MAGENTA}======================================================${NC}"
     echo -e "${BOLD} 🕵️ РЕЖИМ: МАССОВЫЙ ПРОБИВ ЦЕЛЕЙ ПО СПИСКУ (OSINT)${NC}"
     echo -e "${MAGENTA}======================================================${NC}"
-    echo -e "${CYAN}Для чего это нужно?${NC}"
     echo -e "${GRAY}Скрипт поочередно пробьет каждый IP/Домен из вашего файла in.txt,${NC}"
     echo -e "${GRAY}найдет сайты хостеров и сохранит в единое гигантское досье.${NC}\n"
 
@@ -221,7 +225,6 @@ run_mass_recon() {
     cd "$SCANNER_DIR" || return
     export PATH=/usr/local/go/bin:$PATH
 
-    # Перехват Ctrl+C для выхода из цикла файла
     trap 'echo -e "\n${YELLOW}🛑 Процесс прерван пользователем. Сохраняем собранные данные...${NC}"; break' INT
 
     while IFS= read -r raw_target; do
@@ -265,7 +268,11 @@ run_mass_recon() {
         for current_port in "${PORT_ARRAY[@]}"; do
             FULL_REPORT+=" >>> СКАНИРОВАНИЕ ПОРТА: ${current_port} <<<${nl}"
             echo -ne "\r\033[K${CYAN}⏳ Пробив: ${YELLOW}${safe_target}${NC} (Порт: ${current_port})...${NC}"
-            local scan_log=$(./RealiTLScanner -addr "$target" -port "$current_port" -timeout 5 -v 2>&1)
+            
+            local tmp_ghost="tmp_ghost_${current_port}.csv"
+            local scan_log=$(./RealiTLScanner -addr "$target" -port "$current_port" -timeout 5 -v -out "$tmp_ghost" 2>&1)
+            rm -f "$tmp_ghost" 2>/dev/null
+
             local found_info=false
             
             while read -r line; do
@@ -325,7 +332,7 @@ run_mass_recon() {
     pause
 }
 
-# --- 3. УМНЫЙ АНАЛИЗАТОР (АВТОМАТИЧЕСКИЙ И РУЧНОЙ) ---
+# --- 3. УМНЫЙ АНАЛИЗАТОР ---
 analyze_results_auto() {
     local file=$1
     local total_lines=$(wc -l < "$file" 2>/dev/null)
@@ -415,7 +422,7 @@ analyze_results() {
     fi
 }
 
-# --- 4. МАССОВЫЙ СКАНЕР (ДЛЯ ПУНКТОВ 2-5) ---
+# --- 4. МАССОВЫЙ СКАНЕР (ДЛЯ ПУНКТОВ 2, 3, 5) ---
 run_scanner() {
     local mode=$1
     local target=$2
@@ -516,6 +523,15 @@ run_scanner() {
         fi
     done
 
+    # АВТО-ОЧИСТКА: Если в файле только заголовок (ничего не найдено) - удаляем его!
+    local check_lines=$(wc -l < "$SCANNER_DIR/$out_file" 2>/dev/null)
+    if [[ "$check_lines" -le 1 ]]; then
+        echo -e "${RED}[!] Сканер ничего не нашел. Пустой отчет удален.${NC}"
+        rm -f "$SCANNER_DIR/$out_file" 2>/dev/null
+        pause
+        return
+    fi
+
     echo -e "${GREEN}[+] Сканирование завершено!${NC}"
     analyze_results "$SCANNER_DIR/$out_file"
 
@@ -544,7 +560,6 @@ run_mass_subnet_scan() {
     echo -e "${GRAY}Для каждой подсети будет выведен свой личный ТОП кандидатов!${NC}\n"
 
     echo -e "${BLUE}--- ⚙️ ТОНКАЯ НАСТРОЙКА СКАНИРОВАНИЯ ---${NC}"
-
     echo -e "${YELLOW}1. Целевые порты (-port)${NC}"
     echo -e "${GRAY}Обычно маскировка Reality работает на HTTPS порту 443.${NC}"
     echo -e "${GRAY}Но можно указать несколько (напр: 443, 8443). Скрипт проверит их по очереди.${NC}"
@@ -565,8 +580,8 @@ run_mass_subnet_scan() {
     
     echo -e "\n${GREEN}[*] ЗАПУСК СКАНИРОВАНИЯ СПИСКА...${NC}"
     echo -e "${RED}⚠️ ВАЖНО: Вы можете прервать процесс, нажав [Ctrl+C] в любой момент!${NC}"
-    echo -e "${GRAY}Это прервет скан текущей подсети, сохранит её результат и плавно${NC}"
-    echo -e "${GRAY}перейдет к следующему IP-адресу из вашего списка in.txt.${NC}\n"
+    echo -e "${GRAY}Это досрочно прервет скан ТЕКУЩЕЙ подсети, сохранит её результат${NC}"
+    echo -e "${GRAY}и плавно перейдет к следующему IP-адресу из вашего списка in.txt.${NC}\n"
     
     cd "$SCANNER_DIR" || return
     export PATH=/usr/local/go/bin:$PATH
@@ -626,15 +641,22 @@ run_mass_subnet_scan() {
             fi
         done
 
-        analyze_results_auto "$SCANNER_DIR/$out_file"
-        echo -e "\n${GRAY}Файл сохранен: $out_file${NC}\n"
+        # АВТО-ОЧИСТКА ПУСТЫХ ПОДСЕТЕЙ
+        local check_lines=$(wc -l < "$SCANNER_DIR/$out_file" 2>/dev/null)
+        if [[ "$check_lines" -le 1 ]]; then
+            rm -f "$SCANNER_DIR/$out_file" 2>/dev/null
+            echo -e "\n${YELLOW}[!] В этой подсети ничего не найдено. Пустой файл удален.${NC}\n"
+        else
+            analyze_results_auto "$SCANNER_DIR/$out_file"
+            echo -e "\n${GRAY}Файл сохранен: $out_file${NC}\n"
+        fi
 
     done < "$INPUT_FILE"
 
     echo -e "${GREEN}======================================================${NC}"
     echo -e "${BOLD}✅ ВСЕ ЦЕЛИ ИЗ СПИСКА ОБРАБОТАНЫ!${NC}"
     echo -e "${GREEN}======================================================${NC}"
-    echo -e "${GRAY}Сырые CSV файлы сохранены в Менеджере Отчетов.${NC}"
+    echo -e "${GRAY}Все успешные CSV файлы (не пустые) сохранены в Менеджере Отчетов.${NC}"
     pause
 }
 
