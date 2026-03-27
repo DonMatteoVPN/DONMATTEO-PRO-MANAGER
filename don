@@ -2,7 +2,7 @@
 set -u
 
 # --- ТЕКУЩАЯ ВЕРСИЯ СКРИПТА ---
-export APP_VERSION="01.053"
+export APP_VERSION="01.054"
 export REPO_RAW="https://raw.githubusercontent.com/DonMatteoVPN/DONMATTEO-PRO-MANAGER/main"
 
 # Глобальные цвета
@@ -132,7 +132,7 @@ main_menu() {
         echo -e " ${GREEN}R.${NC} 🔍 Reality TLS Scanner"
         echo -e "${BLUE}------------------------------------------------------${NC}"
         echo -e " ${YELLOW}1.${NC} 🌐 Сетевой Экран (UFW)\e[40G${NC}$(get_ufw_status)"
-        echo -e " ${YELLOW}2.${NC} 🔑 Управление SSH (Порты)"
+        echo -e " ${YELLOW}2.${NC} 🔑 Управление SSH (Порты)\e[40G${NC}$(get_ssh_status)"
         echo -e " ${YELLOW}3.${NC} 👮 Защита (Fail2Ban & Whitelist)\e[40G${NC}$(get_f2b_status)"
         echo -e " ${YELLOW}4.${NC} 🚦 TrafficGuard PRO\e[40G${NC}$(get_tg_status)"
         echo -e " ${YELLOW}5.${NC} ⚙️  Настройки (Swap / Память)\e[40G${NC}$(get_swap_status)"
