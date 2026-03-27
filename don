@@ -2,7 +2,7 @@
 set -u
 
 # --- ТЕКУЩАЯ ВЕРСИЯ СКРИПТА ---
-export APP_VERSION="01.052"
+export APP_VERSION="01.053"
 export REPO_RAW="https://raw.githubusercontent.com/DonMatteoVPN/DONMATTEO-PRO-MANAGER/main"
 
 # Глобальные цвета
@@ -66,6 +66,23 @@ get_tg_status() {
 get_swap_status() {
     local swp=$(free -m 2>/dev/null | awk '/^Swap:/ {print $2}')
     if [[ "$swp" != "0" && -n "$swp" ]]; then echo -e "${GREEN}[ВКЛЮЧЕНО: ${swp} MB]${NC}"; else echo -e "${RED}[ВЫКЛЮЧЕН]${NC}"; fi
+}
+get_ssh_status() {
+    # Проверяем статус службы (в разных ОС может быть ssh или sshd)
+    local status_text
+    if systemctl is-active --quiet ssh || systemctl is-active --quiet sshd; then
+        status_text="${GREEN}[РАБОТАЕТ]${NC}"
+    else
+        status_text="${RED}[ВЫКЛЮЧЕН]${NC}"
+    fi
+
+    # Собираем все порты из конфига
+    local ports=$(grep -i "^Port " /etc/ssh/sshd_config | awk '{print $2}' | xargs | sed 's/ /, /g')
+    
+    # Если в конфиге портов нет, значит используется стандартный 22
+    [[ -z "$ports" ]] && ports="22"
+
+    echo -e "${status_text} ${GRAY}(Порты: ${ports})${NC}"
 }
 
 show_banner() {
