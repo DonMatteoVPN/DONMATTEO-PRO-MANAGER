@@ -8,11 +8,13 @@ install_fail2ban() {
     echo -e "${CYAN}[*] Установка и настройка Fail2Ban...${NC}"
     apt-get update -qq && apt-get install fail2ban -y -qq
     
-    # Создаем файлы логов заранее, чтобы Fail2Ban не выдал ошибку при старте
+    # Убедимся, что файлы логов существуют, чтобы Fail2Ban не выдал ошибку при старте
     mkdir -p /var/log/nginx_custom
     touch /var/log/nginx_custom/access.log
     touch /var/log/nginx_custom/stream_scanners.log
 
+    # Создаем пустой whitelist, если его еще нет, чтобы избежать ошибок awk
+    touch "$WHITELIST_FILE"
     local WL_IPS=$(awk '{print $1}' "$WHITELIST_FILE" | grep -E '^[0-9]' | tr '\n' ' ')
     
     # СОЗДАЕМ ФИЛЬТР: Ловит и HTTP-ошибки, и TCP-сканеров из блока stream
@@ -26,7 +28,7 @@ EOF
     local ACTIVE_SSH=$(grep -i "^Port" /etc/ssh/sshd_config | awk '{print $2}' | paste -sd "," -)
     [[ -z "$ACTIVE_SSH" ]] && ACTIVE_SSH="22"
 
-    # НАСТРАИВАЕМ JAIL: Теперь SSH имеет правильный filter и logpath!
+    # НАСТРАИВАЕМ JAIL: Исправлены переносы строк и пути к логам!
     cat << EOF > /etc/fail2ban/jail.local
 [DEFAULT]
 banaction = ufw
@@ -36,16 +38,16 @@ ignoreip = 127.0.0.1/8 ::1 ${WL_IPS}
 enabled = true
 port    = ${ACTIVE_SSH}
 filter  = sshd
-backend = systemd
 logpath = /var/log/auth.log
 maxretry = 3
 findtime = 600
-bantime = ${BANTIME}[nginx-scanners]
+bantime = ${BANTIME}
+
+[nginx-scanners]
 enabled  = true
 port     = anyport
 filter   = nginx-scanners
-logpath  = /var/log/nginx_custom/access.log
-           /var/log/nginx_custom/stream_scanners.log
+logpath  = /var/log/nginx_custom/access.log /var/log/nginx_custom/stream_scanners.log
 maxretry = 3
 findtime = 600
 bantime  = ${BANTIME}
@@ -53,7 +55,13 @@ EOF
 
     systemctl enable fail2ban > /dev/null 2>&1
     systemctl restart fail2ban > /dev/null 2>&1
-    echo -e "${GREEN}[+] Fail2Ban активирован и настроен на новую архитектуру.${NC}"
+    
+    # Проверка, успешно ли запустился Fail2Ban
+    if systemctl is-active --quiet fail2ban; then
+        echo -e "${GREEN}[+] Fail2Ban активирован и настроен на новую архитектуру Nginx.${NC}"
+    else
+        echo -e "${RED}[!] Ошибка запуска Fail2Ban. Проверьте логи: systemctl status fail2ban${NC}"
+    fi
 }
 
 show_f2b_stats() {
