@@ -6,10 +6,8 @@ SCANNER_BIN="$SCANNER_DIR/RealiTLScanner"
 GEO_DB="$SCANNER_DIR/Country.mmdb"
 INPUT_FILE="$SCANNER_DIR/in.txt"
 
-# --- 1. УСТАНОВКА И СБОРКА ---
 check_scanner_install() {
     export PATH=/usr/local/go/bin:$PATH
-
     if [[ ! -f "$SCANNER_BIN" ]]; then
         echo -e "${YELLOW}[*] Сканер не найден. Начинаю установку (Go 1.22+)...${NC}"
         apt-get update >/dev/null 2>&1
@@ -28,11 +26,7 @@ check_scanner_install() {
         echo -e "${CYAN}[*] Компиляция бинарника...${NC}"
         go build -o RealiTLScanner
         
-        if [[ -f "$SCANNER_BIN" ]]; then
-            chmod +x "$SCANNER_BIN"
-        else
-            echo -e "${RED}[!] ОШИБКА сборки.${NC}"; pause; return 1
-        fi
+        if [[ -f "$SCANNER_BIN" ]]; then chmod +x "$SCANNER_BIN"; else echo -e "${RED}[!] ОШИБКА сборки.${NC}"; pause; return 1; fi
     fi
 
     if [[ ! -f "$GEO_DB" ]]; then
@@ -41,7 +35,6 @@ check_scanner_install() {
     fi
 }
 
-# --- 2. СПРАВОЧНИК СТРАН ---
 show_geo_help() {
     echo -e "\n${CYAN}📋 СПРАВОЧНИК ПОПУЛЯРНЫХ КОДОВ СТРАН (ISO 3166-1 alpha-2):${NC}"
     echo -e "${GRAY}FI - Финляндия | NL - Нидерланды | DE - Германия | FR - Франция${NC}"
@@ -49,10 +42,18 @@ show_geo_help() {
     echo -e "${GRAY}SE - Швеция    | CH - Швейцария  | ES - Испания  | TR - Турция${NC}\n"
 }
 
-# --- 3. УМНЫЙ АНАЛИЗАТОР (ПОИСК SNI) ---
 analyze_results() {
     local file=$1
     [[ ! -f "$file" ]] && { echo -e "${RED}[!] Файл $file не найден.${NC}"; return; }
+
+    # Проверка: нашел ли сканер вообще хоть что-то
+    local total_lines=$(wc -l < "$file" 2>/dev/null)
+    if [[ "$total_lines" -le 1 ]]; then
+        echo -e "\n${RED}[!] Сканер ничего не нашел. Цель мертва, либо не поддерживает TLS 1.3 и HTTP/2.${NC}"
+        echo -e "${YELLOW}Подсказка: Сканировать свой собственный IP бесполезно. Сканируйте ПОДСЕТИ (CIDR), чтобы найти соседей!${NC}"
+        pause
+        return
+    fi
 
     clear
     echo -e "${MAGENTA}======================================================${NC}"
@@ -75,47 +76,53 @@ analyze_results() {
 
     echo -e "\n${CYAN}Фильтрация файла: $(basename "$file")...${NC}"
     
-    # Фильтруем доверенных издателей через awk, как в инструкции
     local filtered=$(awk -F, 'NR>1 && $4 ~ /Let'\''s Encrypt|Google|DigiCert|Cloudflare|Sectigo|GlobalSign/' "$file")
 
-    # Жесткий фильтр по ГЕО
     if [[ -n "$target_geo" ]]; then
-        filtered=$(echo "$filtered" | awk -F, -v geo="$target_geo" '$5 == geo')
-        [[ -n "$filtered" ]] && echo -e "${GREEN}[+] Найдены домены в локации: $target_geo${NC}" || echo -e "${RED}[!] В локации $target_geo ничего не найдено.${NC}"
+        local geo_matched=$(echo "$filtered" | awk -F, -v geo="$target_geo" '$5 == geo')
+        if [[ -n "$geo_matched" ]]; then
+            filtered="$geo_matched"
+            echo -e "${GREEN}[+] Найдены домены в локации: $target_geo${NC}"
+        else
+            echo -e "${RED}[!] В локации $target_geo ничего не найдено с надежным сертификатом.${NC}"
+            echo -e "${YELLOW}Показываю лучшие варианты без учета фильтра ГЕО...${NC}"
+        fi
     fi
 
     local best=$(echo "$filtered" | head -n 10)
 
     if [[ -z "$best" ]]; then
-        echo -e "${YELLOW}Подходящих целей (TLS 1.3 + HTTP/2 + Trusted Issuer) не найдено.${NC}"
+        echo -e "${YELLOW}Идеальных целей (TLS 1.3 + Trusted Issuer) не найдено.${NC}"
+        echo -e "${GRAY}Вы можете вручную посмотреть весь отчет через пункт 8.${NC}"
     else
-        echo -e "\n${GREEN}🏆 ТОП-10 ИДЕАЛЬНЫХ SNI КАНДИДАТОВ:${NC}"
+        echo -e "\n${GREEN}🏆 ТОП ИДЕАЛЬНЫХ SNI КАНДИДАТОВ:${NC}"
         echo -e "${BLUE}------------------------------------------------------${NC}"
         echo "$best" | awk -F',' '{print "📍 \033[1;32m" $3 "\033[0m\n   └─ IP: " $1 " | ГЕО: \033[1;33m" $5 "\033[0m | Издатель: " $4 "\n"}'
     fi
     pause
 }
 
-# --- 4. ИНТЕРАКТИВНЫЙ ЗАПУСК С ОПЦИЯМИ ---
 run_scanner() {
     local mode=$1
     local target=$2
     
-    # Автоопределение для подсказки
+    # АВТООПРЕДЕЛЕНИЕ ПОДСЕТИ
     local my_ip=$(curl -s --max-time 3 ipinfo.io/ip 2>/dev/null)
+    local my_subnet=$(echo "$my_ip" | awk -F. '{print $1"."$2"."$3".0/24"}')
     
     if [[ -z "$target" ]]; then
-        echo -e "\n${CYAN}[*] Ваш текущий IP-адрес: ${YELLOW}$my_ip${NC}"
-        read -p ">> Введите цель (Enter = сканировать ВАШ IP): " input_target
-        target=${input_target:-$my_ip}
+        echo -e "\n${CYAN}[*] Ваш IP-адрес: ${YELLOW}$my_ip${NC}"
+        echo -e "${GRAY}💡 Чтобы найти SNI-маскировку рядом с вами, нужно сканировать${NC}"
+        echo -e "${GRAY}всю вашу подсеть соседей по дата-центру: ${GREEN}$my_subnet${NC}"
+        read -p ">> Введите цель (Enter = сканировать соседей $my_subnet): " input_target
+        target=${input_target:-$my_subnet}
     fi
 
-    # Хак для отключения Infinity Mode для одиночного IP
+    # Защита от бесконечности для одиночного IP
     if [[ "$mode" == "addr" && "$target" =~ ^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
         target="${target}/32"
     fi
 
-    # Безопасное имя файла
     local safe_target=$(echo "$target" | sed 's/[^a-zA-Z0-9]/_/g' | cut -c 1-20)
     local out_file="scan_${mode}_${safe_target}_$(date +%s).csv"
 
@@ -148,7 +155,6 @@ run_scanner() {
     analyze_results "$SCANNER_DIR/$out_file"
 }
 
-# --- 5. МЕНЕДЖЕР ОТЧЕТОВ ---
 manage_reports() {
     while true; do
         clear
