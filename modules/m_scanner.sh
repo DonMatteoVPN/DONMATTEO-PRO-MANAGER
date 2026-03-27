@@ -71,11 +71,18 @@ run_single_scan() {
         local safe_target=$target
     fi
 
+    echo -e "\n${BLUE}--- ⚙️ ТОНКАЯ НАСТРОЙКА ---${NC}"
+    echo -e "${YELLOW}1. Целевые порты (-port)${NC}"
+    echo -e "${GRAY}Обычно маскировка Reality работает на HTTPS порту 443.${NC}"
+    echo -e "${GRAY}Но можно указать несколько (напр: 443, 8443). Скрипт проверит их по очереди.${NC}"
     read -p ">> Порт(ы) через запятую (Enter = 443): " s_port
     s_port=${s_port:-443}
     IFS=',' read -ra PORT_ARRAY <<< "${s_port// /}"
 
-    echo -e "\n${GREEN}[*] Сбор данных (OSINT)...${NC}"
+    echo -e "\n${GREEN}[*] ЗАПУСК СКАНИРОВАНИЯ И СБОР ДАННЫХ (OSINT)...${NC}"
+    echo -e "${RED}⚠️ ВАЖНО: Вы можете прервать процесс, нажав [Ctrl+C] в любой момент!${NC}"
+    echo -e "${GRAY}Скрипт НЕ закроется. Он просто досрочно остановит проверку портов,${NC}"
+    echo -e "${GRAY}сохранит всё, что успел найти, и покажет вам готовое досье.${NC}\n"
     
     local REPORT_OUTPUT=""
     local nl=$'\n'
@@ -114,6 +121,9 @@ run_single_scan() {
     cd "$SCANNER_DIR" || return
     export PATH=/usr/local/go/bin:$PATH
     
+    # Перехват Ctrl+C для выхода из цикла портов
+    trap 'echo -e "\n${YELLOW}🛑 Процесс прерван пользователем. Формируем досье...${NC}"; break' INT
+
     for current_port in "${PORT_ARRAY[@]}"; do
         REPORT_OUTPUT+=" >>> СКАНИРОВАНИЕ ПОРТА: ${current_port} <<<${nl}"
         
@@ -159,6 +169,7 @@ run_single_scan() {
             REPORT_OUTPUT+=" ❌ Нет ответа. Возможно, цель блокирует сканирование.${nl}"
         fi
     done
+    trap - INT # Возвращаем Ctrl+C в норму
     
     clear
     echo "$REPORT_OUTPUT" | sed -e "s/ПОДХОДИТ ДЛЯ REALITY/$(printf '\033[1;32m')&$(printf '\033[0m')/" \
@@ -168,8 +179,6 @@ run_single_scan() {
 
     echo -e "\n${BLUE}======================================================${NC}"
     read -p ">> Сохранить это досье в Менеджере Отчетов? (Y/n): " keep_recon
-    
-    # Регулярка для защиты от раскладки. ^[nNтТ] срабатывает, если введено N, n, Т или т (даже с пробелами)
     if [[ "$keep_recon" =~ ^[nNтТ] ]]; then
         echo -e "${YELLOW}Досье не сохранено.${NC}"
     else
@@ -189,20 +198,31 @@ run_mass_recon() {
     echo -e "${MAGENTA}======================================================${NC}"
     echo -e "${BOLD} 🕵️ РЕЖИМ: МАССОВЫЙ ПРОБИВ ЦЕЛЕЙ ПО СПИСКУ (OSINT)${NC}"
     echo -e "${MAGENTA}======================================================${NC}"
+    echo -e "${CYAN}Для чего это нужно?${NC}"
     echo -e "${GRAY}Скрипт поочередно пробьет каждый IP/Домен из вашего файла in.txt,${NC}"
     echo -e "${GRAY}найдет сайты хостеров и сохранит в единое гигантское досье.${NC}\n"
 
+    echo -e "${BLUE}--- ⚙️ ТОНКАЯ НАСТРОЙКА ---${NC}"
+    echo -e "${YELLOW}1. Целевые порты (-port)${NC}"
+    echo -e "${GRAY}Обычно маскировка Reality работает на HTTPS порту 443.${NC}"
+    echo -e "${GRAY}Но можно указать несколько (напр: 443, 8443). Скрипт проверит их по очереди.${NC}"
     read -p ">> Порт(ы) через запятую (Enter = 443): " s_port
     s_port=${s_port:-443}
     IFS=',' read -ra PORT_ARRAY <<< "${s_port// /}"
 
-    echo -e "\n${GREEN}[*] Сбор данных по списку... Пожалуйста, подождите.${NC}"
+    echo -e "\n${GREEN}[*] ЗАПУСК СКАНИРОВАНИЯ И СБОР ДАННЫХ ПО СПИСКУ...${NC}"
+    echo -e "${RED}⚠️ ВАЖНО: Вы можете прервать процесс, нажав [Ctrl+C] в любой момент!${NC}"
+    echo -e "${GRAY}Скрипт НЕ закроется. Он просто досрочно остановит перебор списка,${NC}"
+    echo -e "${GRAY}сохранит всё, что успел пробить, и покажет вам готовое Мега-Досье.${NC}\n"
     
     local FULL_REPORT=""
     local nl=$'\n'
 
     cd "$SCANNER_DIR" || return
     export PATH=/usr/local/go/bin:$PATH
+
+    # Перехват Ctrl+C для выхода из цикла файла
+    trap 'echo -e "\n${YELLOW}🛑 Процесс прерван пользователем. Сохраняем собранные данные...${NC}"; break' INT
 
     while IFS= read -r raw_target; do
         [[ -z "$raw_target" ]] && continue
@@ -244,6 +264,7 @@ run_mass_recon() {
 
         for current_port in "${PORT_ARRAY[@]}"; do
             FULL_REPORT+=" >>> СКАНИРОВАНИЕ ПОРТА: ${current_port} <<<${nl}"
+            echo -ne "\r\033[K${CYAN}⏳ Пробив: ${YELLOW}${safe_target}${NC} (Порт: ${current_port})...${NC}"
             local scan_log=$(./RealiTLScanner -addr "$target" -port "$current_port" -timeout 5 -v 2>&1)
             local found_info=false
             
@@ -284,6 +305,7 @@ run_mass_recon() {
         done
         FULL_REPORT+="${nl}"
     done < "$INPUT_FILE"
+    trap - INT
 
     clear
     echo "$FULL_REPORT" | sed -e "s/ПОДХОДИТ ДЛЯ REALITY/$(printf '\033[1;32m')&$(printf '\033[0m')/" \
@@ -516,19 +538,35 @@ run_mass_subnet_scan() {
     echo -e "${MAGENTA}======================================================${NC}"
     echo -e "${BOLD} 🔍 РЕЖИМ: МАССОВЫЙ СКАН ПОДСЕТЕЙ ПО СПИСКУ${NC}"
     echo -e "${MAGENTA}======================================================${NC}"
-    echo -e "${CYAN}Для чего это нужно?${NC}"
+    echo -e "${CYAN}💡 Для чего это нужно?${NC}"
     echo -e "${GRAY}Скрипт берет каждый IP из вашего списка, автоматически превращает его${NC}"
     echo -e "${GRAY}в подсеть (/24) и ищет 'соседей' с хорошими SNI-доменами.${NC}"
     echo -e "${GRAY}Для каждой подсети будет выведен свой личный ТОП кандидатов!${NC}\n"
 
+    echo -e "${BLUE}--- ⚙️ ТОНКАЯ НАСТРОЙКА СКАНИРОВАНИЯ ---${NC}"
+
+    echo -e "${YELLOW}1. Целевые порты (-port)${NC}"
+    echo -e "${GRAY}Обычно маскировка Reality работает на HTTPS порту 443.${NC}"
+    echo -e "${GRAY}Но можно указать несколько (напр: 443, 8443). Скрипт проверит их по очереди.${NC}"
     read -p ">> Порт(ы) через запятую (Enter = 443): " s_port; s_port=${s_port:-443}
     IFS=',' read -ra PORT_ARRAY <<< "${s_port// /}"
+
+    echo -e "\n${YELLOW}2. Количество потоков (-thread)${NC}"
+    echo -e "${GRAY}Сколько IP проверять одновременно. Больше = быстрее, но может нагрузить сервер.${NC}"
     read -p ">> Потоков (Enter = 10, макс 50): " s_thread; s_thread=${s_thread:-10}
+
+    echo -e "\n${YELLOW}3. Таймаут ответа (-timeout)${NC}"
+    echo -e "${GRAY}Сколько секунд ждать ответа от сервера. 5 секунд оптимально для хороших сетей.${NC}"
     read -p ">> Таймаут в сек (Enter = 5): " s_timeout; s_timeout=${s_timeout:-5}
-    read -p ">> Сколько успешных SNI найти для КАЖДОГО IP? (Enter = 0, до конца): " s_limit; s_limit=${s_limit:-0}
+
+    echo -e "\n${YELLOW}4. Лимит поиска (Стоп-кран) для КАЖДОЙ подсети${NC}"
+    echo -e "${GRAY}Сколько успешных SNI найти для одного IP, прежде чем перейти к следующему.${NC}"
+    read -p ">> Сколько найти? (Enter = 0, до конца): " s_limit; s_limit=${s_limit:-0}
     
-    echo -e "\n${GREEN}[*] ЗАПУСК СКАНИРОВАНИЯ...${NC}"
-    echo -e "${RED}⚠️ Нажатие Ctrl+C прервет скан текущей подсети и перейдет к следующей в списке!${NC}\n"
+    echo -e "\n${GREEN}[*] ЗАПУСК СКАНИРОВАНИЯ СПИСКА...${NC}"
+    echo -e "${RED}⚠️ ВАЖНО: Вы можете прервать процесс, нажав [Ctrl+C] в любой момент!${NC}"
+    echo -e "${GRAY}Это прервет скан текущей подсети, сохранит её результат и плавно${NC}"
+    echo -e "${GRAY}перейдет к следующему IP-адресу из вашего списка in.txt.${NC}\n"
     
     cd "$SCANNER_DIR" || return
     export PATH=/usr/local/go/bin:$PATH
@@ -556,7 +594,7 @@ run_mass_subnet_scan() {
             ./RealiTLScanner -addr "$target" -port "$current_port" -thread "$s_thread" -timeout "$s_timeout" -out "$tmp_csv" >/dev/null 2>&1 &
             local SCAN_PID=$!
             
-            trap 'kill $SCAN_PID 2>/dev/null; echo -e "\n${YELLOW}🛑 Пропуск текущей подсети...${NC}"; break' INT
+            trap 'kill $SCAN_PID 2>/dev/null; echo -e "\n${YELLOW}🛑 Пропуск текущей подсети. Переход к следующей...${NC}"; break' INT
 
             while kill -0 $SCAN_PID 2>/dev/null; do
                 if [[ -f "$tmp_csv" ]]; then
