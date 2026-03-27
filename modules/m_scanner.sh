@@ -243,20 +243,33 @@ run_scanner() {
         
         trap 'kill $SCAN_PID 2>/dev/null; echo -e "\n\n${YELLOW}Остановлено пользователем.${NC}"; break' INT
 
-        # ЖИВОЙ ИНДИКАТОР ПРОГРЕССА
+        # ЖИВОЙ ИНДИКАТОР ПРОГРЕССА С ОТОБРАЖЕНИЕМ SNI
         while kill -0 $SCAN_PID 2>/dev/null; do
-            local current_count=$(wc -l < "$tmp_csv" 2>/dev/null || echo 0)
-            local actual_count=$((current_count > 0 ? current_count - 1 : 0)) # Вычитаем заголовок таблицы
-            
-            # Обновляемая строка в терминале (\r возвращает каретку в начало строки)
-            echo -ne "\r${CYAN}⏳ Идет сканирование... Найдено рабочих SNI: ${GREEN}${actual_count}${NC}  "
-            
-            if [[ "$s_limit" -gt 0 && "$actual_count" -ge "$s_limit" ]]; then
-                echo -e "\n${GREEN}[+] Лимит ($s_limit) достигнут! Останавливаем сканер...${NC}"
-                kill $SCAN_PID 2>/dev/null
-                break
+            # Проверяем, существует ли файл, чтобы избежать ошибки
+            if [[ -f "$tmp_csv" ]]; then
+                # Читаем файл безопасно через cat
+                local current_count=$(cat "$tmp_csv" 2>/dev/null | wc -l)
+                local actual_count=$((current_count > 0 ? current_count - 1 : 0)) # Вычитаем заголовок
+                
+                # Вытаскиваем последний найденный домен
+                local last_sni=$(tail -n 1 "$tmp_csv" 2>/dev/null | awk -F, '{print $3}')
+                
+                # Очищаем строку (\033[K) и выводим обновленные данные
+                if [[ -n "$last_sni" && "$last_sni" != "CERT_DOMAIN" ]]; then
+                    echo -ne "\r\033[K${CYAN}⏳ Сканирование... Найдено SNI: ${GREEN}${actual_count}${NC} | Последний: ${YELLOW}${last_sni}${NC}"
+                else
+                    echo -ne "\r\033[K${CYAN}⏳ Сканирование... Найдено SNI: ${GREEN}${actual_count}${NC}"
+                fi
+                
+                if [[ "$s_limit" -gt 0 && "$actual_count" -ge "$s_limit" ]]; then
+                    echo -e "\n\n${GREEN}[+] Лимит ($s_limit) достигнут! Останавливаем сканер...${NC}"
+                    kill $SCAN_PID 2>/dev/null
+                    break
+                fi
+            else
+                echo -ne "\r\033[K${CYAN}⏳ Запуск потоков и ожидание первых результатов...${NC}"
             fi
-            sleep 2
+            sleep 1
         done
         echo -e "" # Перенос строки после завершения цикла
         trap - INT
