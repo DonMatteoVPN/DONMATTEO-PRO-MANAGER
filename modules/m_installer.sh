@@ -34,12 +34,14 @@ show_prereq_instructions() {
     echo -e " ${GREEN}set_real_ip_from unix:;${NC}"
     echo -e " ${GREEN}real_ip_header proxy_protocol;${NC}"
     echo -e " ${GREEN}access_log /var/log/nginx_custom/access.log;${NC}\n"
+    echo -e " ${GREEN}error_log /var/log/nginx_custom/error.log;${NC}\n"
 
     echo -e " ${YELLOW}ВАРИАНТ Б: У вас REALITY + XHTTP (Продвинутая 'Матрешка')${NC}"
     echo -e " У вас должно быть ДВА блока. В наружном блоке ${CYAN}stream { ... }${NC} укажите:"
     echo -e " ${GREEN}access_log /var/log/nginx_custom/stream_scanners.log stream_routing;${NC}"
     echo -e " А во внутреннем блоке ${CYAN}http { server { ... } }${NC} укажите:"
     echo -e " ${GREEN}access_log /var/log/nginx_custom/access.log;${NC}\n"
+    echo -e " ${GREEN}error_log /var/log/nginx_custom/error.log;${NC}\n"
 
     echo -e "${MAGENTA}======================================================================${NC}"
     echo -e "${YELLOW} После внесения изменений ПЕРЕСОБЕРИТЕ КОНТЕЙНЕРЫ командой:${NC}"
