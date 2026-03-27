@@ -13,11 +13,11 @@ install_fail2ban() {
     touch /var/log/nginx_custom/access.log
     touch /var/log/nginx_custom/stream_scanners.log
 
-    # Создаем пустой whitelist, если его еще нет, чтобы избежать ошибок awk
+    # Создаем пустой whitelist, если его еще нет
     touch "$WHITELIST_FILE"
     local WL_IPS=$(awk '{print $1}' "$WHITELIST_FILE" | grep -E '^[0-9]' | tr '\n' ' ')
     
-    # СОЗДАЕМ ФИЛЬТР: Ловит и HTTP-ошибки, и TCP-сканеров из блока stream
+    # СОЗДАЕМ ФИЛЬТР
     cat << 'EOF' > /etc/fail2ban/filter.d/nginx-scanners.conf
 [Definition]
 failregex = ^<HOST> \- \- \[.*\] "(GET|POST|HEAD|PROPFIND|OPTIONS|PUT|DELETE).*?" (400|401|403|404|405|444)
@@ -28,7 +28,7 @@ EOF
     local ACTIVE_SSH=$(grep -i "^Port" /etc/ssh/sshd_config | awk '{print $2}' | paste -sd "," -)
     [[ -z "$ACTIVE_SSH" ]] && ACTIVE_SSH="22"
 
-    # НАСТРАИВАЕМ JAIL: Исправлены переносы строк и пути к логам!
+    # НАСТРАИВАЕМ JAIL: Обратите внимание на отступ (пробелы) перед вторым файлом логов!
     cat << EOF > /etc/fail2ban/jail.local
 [DEFAULT]
 banaction = ufw
@@ -47,7 +47,8 @@ bantime = ${BANTIME}
 enabled  = true
 port     = anyport
 filter   = nginx-scanners
-logpath  = /var/log/nginx_custom/access.log /var/log/nginx_custom/stream_scanners.log
+logpath  = /var/log/nginx_custom/access.log
+           /var/log/nginx_custom/stream_scanners.log
 maxretry = 3
 findtime = 600
 bantime  = ${BANTIME}
@@ -58,7 +59,7 @@ EOF
     
     # Проверка, успешно ли запустился Fail2Ban
     if systemctl is-active --quiet fail2ban; then
-        echo -e "${GREEN}[+] Fail2Ban активирован и настроен на новую архитектуру Nginx.${NC}"
+        echo -e "${GREEN}[+] Fail2Ban активирован и работает без ошибок!${NC}"
     else
         echo -e "${RED}[!] Ошибка запуска Fail2Ban. Проверьте логи: systemctl status fail2ban${NC}"
     fi
