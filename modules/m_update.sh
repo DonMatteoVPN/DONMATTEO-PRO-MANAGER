@@ -36,7 +36,7 @@ run_auto_update() {
     fi
 
     echo -e "${CYAN}[*] Загрузка новых модулей...${NC}"
-    local MODULES=("m_ufw.sh" "m_ssh.sh" "m_f2b.sh" "m_tg.sh" "m_swap.sh" "m_cleaner.sh" "m_installer.sh" "m_update.sh" "m_scanner.sh")
+    local MODULES=("m_ufw.sh" "m_ssh.sh" "m_f2b.sh" "m_tg.sh" "m_swap.sh" "m_cleaner.sh" "m_installer.sh" "m_update.sh" "m_scanner.sh" "m_node")
     
     for mod in "${MODULES[@]}"; do
         echo -e " └─ Скачивание ${mod}..."
