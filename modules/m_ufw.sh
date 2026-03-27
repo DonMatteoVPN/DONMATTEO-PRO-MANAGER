@@ -1,5 +1,13 @@
 #!/bin/bash
 
+# Пути к файлам настроек (значения лимитов)
+export CONN_VAL_FILE="/opt/remnawave/limit_conn_val.txt"
+export RATE_VAL_FILE="/opt/remnawave/limit_rate_val.txt"
+
+# Инициализация дефолтных значений, если файлы пусты
+[[ ! -f "$CONN_VAL_FILE" ]] && echo "150" > "$CONN_VAL_FILE"
+[[ ! -f "$RATE_VAL_FILE" ]] && echo "80" > "$RATE_VAL_FILE"
+
 get_sysctl_status() {
     if [[ "$(sysctl -n net.ipv4.tcp_syncookies 2>/dev/null)" == "1" ]]; then echo -e "${GREEN}[ВКЛЮЧЕНО]${NC}"; else echo -e "${RED}[НЕ УСТАНОВЛЕНО]${NC}"; fi
 }
@@ -8,31 +16,48 @@ get_ufw_status() {
     if ufw status | grep -qw active; then echo -e "${GREEN}[РАБОТАЕТ]${NC}"; else echo -e "${RED}[ВЫКЛЮЧЕН]${NC}"; fi
 }
 
+# --- ГЛАВНАЯ ФУНКЦИЯ СБОРКИ ПРАВИЛ ---
 ufw_global_setup() {
-    echo -e "${CYAN}[*] Сборка и инициализация структуры UFW...${NC}"
+    echo -e "${CYAN}[*] Пересборка правил Anti-DDoS и перезапуск UFW...${NC}"
     apt-get install ufw -y -qq
+    
+    local CONN_LIMIT=$(cat "$CONN_VAL_FILE")
+    local RATE_LIMIT=$(cat "$RATE_VAL_FILE")
+    
     cp /etc/ufw/before.rules /etc/ufw/before.rules.bak
+    
+    # Очистка старых блоков правил DonMatteo
     sed -i '/# --- НАЧАЛО: Правила защиты от DDoS (DonMatteo) ---/,/# --- КОНЕЦ: Направляем трафик на проверку скорости ---/d' /etc/ufw/before.rules
     
+    # Сборка Белого Списка
     local WL_BEFORE=""
-    for ip in $(awk '{print $1}' "$WHITELIST_FILE" | grep -E '^[0-9]'); do WL_BEFORE+="-A ufw-before-input -s $ip -j ACCEPT\\n"; done
+    [[ -f "$WHITELIST_FILE" ]] && for ip in $(awk '{print $1}' "$WHITELIST_FILE" | grep -E '^[0-9]'); do WL_BEFORE+="-A ufw-before-input -s $ip -j ACCEPT\\n"; done
     
+    # Сборка CONNLIMIT (Жесткие лимиты)
     local CONNLIMIT_RULES=""
-    for port in $(cat "$CONNLIMIT_FILE" | grep -E '^[0-9]+$'); do CONNLIMIT_RULES+="-A ufw-before-input -p tcp --dport $port -m connlimit --connlimit-above 150 --connlimit-mask 32 -j DROP\\n"; done
+    [[ -f "$CONNLIMIT_FILE" ]] && for port in $(cat "$CONNLIMIT_FILE" | grep -E '^[0-9]+$'); do 
+        CONNLIMIT_RULES+="-A ufw-before-input -p tcp --dport $port -m connlimit --connlimit-above $CONN_LIMIT --connlimit-mask 32 -j DROP\\n"
+    done
     
+    # Сборка RATELIMIT (Плавные лимиты)
     local RATELIMIT_RULES=""
     local ACTIVE_SSH=$(grep -i "^Port" /etc/ssh/sshd_config | awk '{print $2}' | head -n 1)
     [[ -z "$ACTIVE_SSH" ]] && ACTIVE_SSH="22"
+    
+    # SSH всегда под лимитом скорости
     RATELIMIT_RULES+="-A ufw-before-input -p tcp --dport $ACTIVE_SSH -m conntrack --ctstate NEW -j IN_LIMIT\\n"
     
-    for port in $(cat "$RATELIMIT_FILE" | grep -E '^[0-9]+$'); do
-        if [[ "$port" != "$ACTIVE_SSH" ]]; then RATELIMIT_RULES+="-A ufw-before-input -p tcp --dport $port -m conntrack --ctstate NEW -j IN_LIMIT\\n"; fi
+    [[ -f "$RATELIMIT_FILE" ]] && for port in $(cat "$RATELIMIT_FILE" | grep -E '^[0-9]+$'); do
+        if [[ "$port" != "$ACTIVE_SSH" ]]; then 
+            RATELIMIT_RULES+="-A ufw-before-input -p tcp --dport $port -m conntrack --ctstate NEW -j IN_LIMIT\\n"
+        fi
     done
 
+    # Инъекция правил в начало файла before.rules
     sed -i '/^\*filter/a \
 # --- НАЧАЛО: Правила защиты от DDoS (DonMatteo) ---\n\
 :IN_LIMIT - [0:0]\n\
--A IN_LIMIT -m limit --limit 80/s --limit-burst 250 -j RETURN\n\
+-A IN_LIMIT -m limit --limit '"$RATE_LIMIT"'/s --limit-burst 250 -j RETURN\n\
 -A IN_LIMIT -j DROP\n\
 # --- КОНЕЦ: Правила защиты от DDoS ---\n\
 \n\
@@ -54,7 +79,21 @@ ufw_global_setup() {
 
     echo "y" | ufw enable > /dev/null 2>&1
     ufw reload > /dev/null 2>&1
-    echo -e "${GREEN}[+] Ядро UFW и динамические лимиты настроены.${NC}"
+    echo -e "${GREEN}[+] Правила успешно применены. Лимиты: Conn=$CONN_LIMIT, Rate=$RATE_LIMIT/s${NC}"
+}
+
+# Функция изменения числового значения лимита
+set_limit_val() {
+    local FILE=$1; local NAME=$2
+    clear; echo -e "${MAGENTA}=== ИЗМЕНЕНИЕ ЗНАЧЕНИЯ: $NAME ===${NC}"
+    echo -e "${GRAY}Текущее значение: $(cat "$FILE")${NC}"
+    read -p "Введите новое число: " newval
+    if [[ "$newval" =~ ^[0-9]+$ ]] && [ "$newval" -gt 0 ]; then
+        echo "$newval" > "$FILE"
+        ufw_global_setup
+    else
+        echo -e "${RED}Ошибка: Введите целое число!${NC}"; sleep 1
+    fi
 }
 
 manage_limit_ports() {
@@ -71,8 +110,8 @@ manage_limit_ports() {
         echo -e "\n ${GREEN}1.${NC} ➕ Добавить порт | ${RED}2.${NC} ➖ Удалить порт | ${CYAN}0.${NC} ↩️  Назад"
         read -p ">> " lch
         case $lch in
-            1) read -p "Впишите порт: " new_port; [[ "$new_port" =~ ^[0-9]+$ ]] && { grep -q "^$new_port$" "$FILE" && echo -e "${YELLOW}Уже есть!${NC}" || { echo "$new_port" >> "$FILE"; ufw_global_setup >/dev/null 2>&1; echo -e "${GREEN}Успешно добавлен!${NC}"; }; }; sleep 1 ;;
-            2) read -p "Введите НОМЕР: " del_num; if [[ "$del_num" =~ ^[0-9]+$ ]] && [ "$del_num" -lt "$i" ] && [ "$del_num" -gt 0 ]; then sed -i "/^${ARR[$del_num]}$/d" "$FILE"; ufw_global_setup >/dev/null 2>&1; echo -e "${GREEN}Удалено.${NC}"; sleep 1; fi ;;
+            1) read -p "Впишите порт: " new_port; [[ "$new_port" =~ ^[0-9]+$ ]] && { grep -q "^$new_port$" "$FILE" && echo -e "${YELLOW}Уже есть!${NC}" || { echo "$new_port" >> "$FILE"; ufw_global_setup; }; }; sleep 1 ;;
+            2) read -p "Введите НОМЕР: " del_num; if [[ "$del_num" =~ ^[0-9]+$ ]] && [ "$del_num" -lt "$i" ] && [ "$del_num" -gt 0 ]; then sed -i "/^${ARR[$del_num]}$/d" "$FILE"; ufw_global_setup; echo -e "${GREEN}Удалено.${NC}"; sleep 1; fi ;;
             0) return ;;
         esac
     done
@@ -80,25 +119,52 @@ manage_limit_ports() {
 
 ufw_limits_menu() {
     while true; do
+        local cur_conn=$(cat "$CONN_VAL_FILE")
+        local cur_rate=$(cat "$RATE_VAL_FILE")
         clear
         echo -e "${BLUE}======================================================${NC}"
         echo -e "${BOLD}${MAGENTA}  ⚙️ УПРАВЛЕНИЕ ЛИМИТАМИ (ANTI-DDOS)${NC}"
-        echo -e "${GRAY} Защита от исчерпания ресурсов сервера на уровне ядра.${NC}"
         echo -e "${BLUE}======================================================${NC}"
-        echo -e " ${YELLOW}1.${NC} 🛡️  Жесткий лимит соединений (CONNLIMIT)"
-        echo -e "    ${GRAY}└─ Сбрасывает IP, если он открыл > 150 потоков.${NC}"
-        echo -e " ${YELLOW}2.${NC} 🚦 Плавный лимит скорости (RATELIMIT)"
-        echo -e "    ${GRAY}└─ Режет скорость, если идет > 80 запросов в секунду.${NC}"
+        echo -e " ${YELLOW}1.${NC} 🛡️  Порты CONNLIMIT (Жесткий блок) ${GRAY}[Значение: $cur_conn]${NC}"
+        echo -e " ${YELLOW}2.${NC} 🚦 Порты RATELIMIT (Плавный блок)  ${GRAY}[Значение: $cur_rate/s]${NC}"
+        echo -e "${BLUE}------------------------------------------------------${NC}"
+        echo -e " ${GREEN}3.${NC} ✍️  Изменить лимит потоков (сейчас $cur_conn)"
+        echo -e " ${GREEN}4.${NC} ✍️  Изменить лимит скорости (сейчас $cur_rate)"
+        echo -e " ${CYAN}5.${NC} 📖 ${BOLD}СПРАВКА: КАКИЕ ЗНАЧЕНИЯ СТАВИТЬ ДЛЯ VPN?${NC}"
         echo -e " ${CYAN}0.${NC} ↩️  Назад"
         read -p ">> " ch
         case $ch in
-            1) manage_limit_ports "$CONNLIMIT_FILE" "ПОРТЫ ДЛЯ CONNLIMIT (Жесткий блок)" "Сбрасывает злоумышленника, если он открыл больше 150 соединений." ;;
-            2) manage_limit_ports "$RATELIMIT_FILE" "ПОРТЫ ДЛЯ RATELIMIT (Скорость сессий)" "Ограничивает глобальный шторм новых подключений." ;;
+            1) manage_limit_ports "$CONNLIMIT_FILE" "CONNLIMIT ПОРТЫ" "Блокирует IP, если он превысил порог соединений." ;;
+            2) manage_limit_ports "$RATELIMIT_FILE" "RATELIMIT ПОРТЫ" "Ограничивает число новых попыток подключения в секунду." ;;
+            3) set_limit_val "$CONN_VAL_FILE" "CONNLIMIT" ;;
+            4) set_limit_val "$RATE_VAL_FILE" "RATELIMIT" ;;
+            5) show_vpn_limits_help ;;
             0) return ;;
         esac
     done
 }
 
+show_vpn_limits_help() {
+    clear
+    echo -e "${MAGENTA}=== СПРАВКА ПО ЛИМИТАМ ДЛЯ VPN ===${NC}\n"
+    echo -e "${BOLD}1. CONNLIMIT (Макс. соединений с одного IP)${NC}"
+    echo -e "   ${CYAN}Как работает:${NC} Считает, сколько 'ниток' тянет клиент. "
+    echo -e "   ${CYAN}Для VPN:${NC} Если используете Xray gRPC или Reality с мультиплексированием (Mux),"
+    echo -e "   клиент занимает ВСЕГО 1-5 соединений. Если Mux выключен - до 50."
+    echo -e "   ${GREEN}Рекомендуемое значение:${NC} 150-200 (золотая середина)."
+    echo -e "   ${YELLOW}Зачем повышать?${NC} Если за одним роутером (NAT) сидит весь офис."
+    echo -e "\n${BOLD}2. RATELIMIT (Скорость новых запросов)${NC}"
+    echo -e "   ${CYAN}Как работает:${NC} Сколько РАЗ в секунду клиент может постучаться на порт."
+    echo -e "   ${CYAN}Для VPN:${NC} Обычный клиент стучится 1-2 раза при подключении."
+    echo -e "   Боты-сканеры (Shodan) стучатся 500+ раз в секунду."
+    echo -e "   ${GREEN}Рекомендуемое значение:${NC} 50-100 в секунду."
+    echo -e "\n${BOLD}Как определить идеальное значение?${NC}"
+    echo -e "   Включите логи UFW (${YELLOW}ufw logging on${NC}). Если в логах много 'DROP' "
+    echo -e "   от реальных пользователей - повышайте значения на 50 пунктов."
+    pause
+}
+
+# --- ОСТАЛЬНЫЕ ФУНКЦИИ (ПОРТЫ И IP) ---
 ufw_add_port() {
     clear; echo -e "${MAGENTA}=== ОТКРЫТИЕ ПОРТА ===${NC}"; read -p "Впишите порт: " port; [[ -z "$port" ]] && return
     read -p "Укажите протокол (tcp/udp/any) [any]: " proto; [[ -z "$proto" || "$proto" == "any" ]] && proto_str="" || proto_str="/$proto"
@@ -134,13 +200,9 @@ menu_ufw() {
         echo -e "${GRAY} Сетевой экран. Определяет, кто может подключиться.${NC}"
         echo -e "${BLUE}======================================================${NC}"
         echo -e " ${YELLOW}1.${NC} 🔓 Открыть порт (Для всех)"
-        echo -e "    ${GRAY}└─ Разрешает входящий трафик из интернета на порт.${NC}"
         echo -e " ${YELLOW}2.${NC} 🎯 Открыть порт (Для конкретного IP)"
-        echo -e "    ${GRAY}└─ Доступ к порту будет только у доверенного IP.${NC}"
         echo -e " ${YELLOW}3.${NC} 📋 Просмотр активных правил и Удаление"
-        echo -e "    ${GRAY}└─ Показывает нумерованный список для управления.${NC}"
         echo -e " ${YELLOW}4.${NC} ⚙️  Управление портами защиты (DDoS Лимиты)"
-        echo -e "    ${GRAY}└─ Настройка встроенного Anti-DDoS от флуда.${NC}"
         echo -e " ${CYAN}0.${NC} ↩️  Назад"
         read -p ">> " choice
         case $choice in
