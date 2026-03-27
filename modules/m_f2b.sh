@@ -1,23 +1,36 @@
 #!/bin/bash
 
+# Пути к файлам настроек Fail2Ban
+export F2B_RETRY_FILE="/opt/remnawave/f2b_maxretry.txt"
+export F2B_FIND_FILE="/opt/remnawave/f2b_findtime.txt"
+export F2B_BAN_FILE="/opt/remnawave/f2b_bantime.txt"
+
+# Инициализация дефолтных значений, если файлы пусты
+[[ ! -f "$F2B_RETRY_FILE" ]] && echo "3" > "$F2B_RETRY_FILE"
+[[ ! -f "$F2B_FIND_FILE" ]] && echo "600" > "$F2B_FIND_FILE"
+[[ ! -f "$F2B_BAN_FILE" ]] && echo "24h" > "$F2B_BAN_FILE"
+
 get_f2b_status() {
     if systemctl is-active --quiet fail2ban; then echo -e "${GREEN}[РАБОТАЕТ]${NC}"; else echo -e "${RED}[НЕ УСТАНОВЛЕНО/ВЫКЛЮЧЕН]${NC}"; fi
 }
 
+# --- ГЛАВНАЯ ФУНКЦИЯ УСТАНОВКИ И ОБНОВЛЕНИЯ КОНФИГА ---
 install_fail2ban() {
-    echo -e "${CYAN}[*] Установка и настройка Fail2Ban...${NC}"
+    echo -e "${CYAN}[*] Настройка конфигурации Fail2Ban...${NC}"
     apt-get update -qq && apt-get install fail2ban -y -qq
     
-    # Убедимся, что файлы логов существуют, чтобы Fail2Ban не выдал ошибку при старте
     mkdir -p /var/log/nginx_custom
     touch /var/log/nginx_custom/access.log
     touch /var/log/nginx_custom/stream_scanners.log
 
-    # Создаем пустой whitelist, если его еще нет
     touch "$WHITELIST_FILE"
     local WL_IPS=$(awk '{print $1}' "$WHITELIST_FILE" | grep -E '^[0-9]' | tr '\n' ' ')
     
-    # СОЗДАЕМ ФИЛЬТР
+    # Загружаем текущие значения из файлов
+    local CUR_RETRY=$(cat "$F2B_RETRY_FILE")
+    local CUR_FIND=$(cat "$F2B_FIND_FILE")
+    local CUR_BAN=$(cat "$F2B_BAN_FILE")
+
     cat << 'EOF' > /etc/fail2ban/filter.d/nginx-scanners.conf
 [Definition]
 failregex = ^<HOST> \- \- \[.*\] "(GET|POST|HEAD|PROPFIND|OPTIONS|PUT|DELETE).*?" (400|401|403|404|405|444)
@@ -28,7 +41,6 @@ EOF
     local ACTIVE_SSH=$(grep -i "^Port" /etc/ssh/sshd_config | awk '{print $2}' | paste -sd "," -)
     [[ -z "$ACTIVE_SSH" ]] && ACTIVE_SSH="22"
 
-    # НАСТРАИВАЕМ JAIL: Обратите внимание на отступ (пробелы) перед вторым файлом логов!
     cat << EOF > /etc/fail2ban/jail.local
 [DEFAULT]
 banaction = ufw
@@ -39,9 +51,9 @@ enabled = true
 port    = ${ACTIVE_SSH}
 filter  = sshd
 logpath = /var/log/auth.log
-maxretry = 3
-findtime = 600
-bantime = ${BANTIME}
+maxretry = ${CUR_RETRY}
+findtime = ${CUR_FIND}
+bantime = ${CUR_BAN}
 
 [nginx-scanners]
 enabled  = true
@@ -49,21 +61,84 @@ port     = anyport
 filter   = nginx-scanners
 logpath  = /var/log/nginx_custom/access.log
            /var/log/nginx_custom/stream_scanners.log
-maxretry = 3
-findtime = 600
-bantime  = ${BANTIME}
+maxretry = ${CUR_RETRY}
+findtime = ${CUR_FIND}
+bantime  = ${CUR_BAN}
 EOF
 
     systemctl enable fail2ban > /dev/null 2>&1
     systemctl restart fail2ban > /dev/null 2>&1
     
-    # Проверка, успешно ли запустился Fail2Ban
     if systemctl is-active --quiet fail2ban; then
-        echo -e "${GREEN}[+] Fail2Ban активирован и работает без ошибок!${NC}"
+        echo -e "${GREEN}[+] Конфигурация Fail2Ban успешно применена.${NC}"
     else
-        echo -e "${RED}[!] Ошибка запуска Fail2Ban. Проверьте логи: systemctl status fail2ban${NC}"
+        echo -e "${RED}[!] Ошибка при запуске. Проверьте синтаксис значений.${NC}"
     fi
 }
+
+# --- ФУНКЦИИ УПРАВЛЕНИЯ НАСТРОЙКАМИ ---
+set_f2b_val() {
+    local FILE=$1; local NAME=$2; local EXAMPLE=$3
+    clear; echo -e "${MAGENTA}=== ИЗМЕНЕНИЕ НАСТРОЙКИ: $NAME ===${NC}"
+    echo -e "${GRAY}Текущее значение: $(cat "$FILE")${NC}"
+    echo -e "${GRAY}Пример формата: $EXAMPLE${NC}\n"
+    read -p "Введите новое значение: " newval
+    if [[ -z "$newval" ]]; then return; fi
+    echo "$newval" > "$FILE"
+    install_fail2ban
+    sleep 1
+}
+
+f2b_settings_menu() {
+    while true; do
+        clear
+        local retry=$(cat "$F2B_RETRY_FILE")
+        local find=$(cat "$F2B_FIND_FILE")
+        local ban=$(cat "$F2B_BAN_FILE")
+        echo -e "${BLUE}======================================================${NC}"
+        echo -e "${BOLD}${MAGENTA}  ⚙️  НАСТРОЙКИ АГРЕССИВНОСТИ ЗАЩИТЫ${NC}"
+        echo -e "${BLUE}======================================================${NC}"
+        echo -e " ${YELLOW}1.${NC} Количество попыток (Maxretry)    ${CYAN}[$retry]${NC}"
+        echo -e " ${YELLOW}2.${NC} Окно поиска атак (Findtime)      ${CYAN}[$find сек]${NC}"
+        echo -e " ${YELLOW}3.${NC} Время блокировки (Bantime)       ${CYAN}[$ban]${NC}"
+        echo -e "${BLUE}------------------------------------------------------${NC}"
+        echo -e " ${GREEN}4.${NC} 📖 ${BOLD}СПРАВКА ДЛЯ ЧАЙНИКОВ (Как настроить?)${NC}"
+        echo -e " ${CYAN}0.${NC} ↩️  Назад"
+        read -p ">> " ch
+        case $ch in
+            1) set_f2b_val "$F2B_RETRY_FILE" "MAXRETRY" "3 (число попыток)" ;;
+            2) set_f2b_val "$F2B_FIND_FILE" "FINDTIME" "600 (в секундах)" ;;
+            3) set_f2b_val "$F2B_BAN_FILE" "BANTIME" "24h или 3600 (сек)" ;;
+            4) show_f2b_help ;;
+            0) return ;;
+        esac
+    done
+}
+
+show_f2b_help() {
+    clear
+    echo -e "${MAGENTA}=== СПРАВКА ПО НАСТРОЙКАМ FAIL2BAN ===${NC}\n"
+    echo -e "${BOLD}1. Maxretry (Попытки)${NC}"
+    echo -e "   Сколько раз хакер может ошибиться, прежде чем его забанят."
+    echo -e "   ${CYAN}Для VPN:${NC} Ставьте ${GREEN}3-5${NC}. Меньше 3 нельзя — забаните себя при опечатке."
+    
+    echo -e "\n${BOLD}2. Findtime (Окно поиска)${NC}"
+    echo -e "   Время (в секундах), в течение которого считаются ошибки."
+    echo -e "   Если Findtime 600 (10 мин), а Maxretry 3 — хакера забанят, "
+    echo -e "   только если он совершил 3 атаки именно за эти 10 минут."
+    echo -e "   ${CYAN}Для VPN:${NC} Рекомендуется ${GREEN}600 (10 мин)${NC} или 3600 (1 час)."
+
+    echo -e "\n${BOLD}3. Bantime (Время бана)${NC}"
+    echo -e "   На сколько IP адрес попадает в черный список UFW."
+    echo -e "   Можно писать в секундах (3600) или часах/днях (24h, 7d)."
+    echo -e "   ${CYAN}Для VPN:${NC} Рекомендуется ${GREEN}24h${NC} или больше."
+    
+    echo -e "\n${YELLOW}СОВЕТ:${NC} Если вас сильно атакуют, увеличьте Bantime до 48h и"
+    echo -e "уменьшите Maxretry до 2 (но будьте осторожны со своими паролями!)."
+    pause
+}
+
+# --- ОСТАЛЬНЫЕ ФУНКЦИИ (СТАТИСТИКА, РАЗБАН, WHITELIST) ---
 
 show_f2b_stats() {
     clear; echo -e "${MAGENTA}=== ПОДРОБНАЯ СТАТИСТИКА ЗАЩИТЫ FAIL2BAN ===${NC}\n"
@@ -80,10 +155,8 @@ show_f2b_stats() {
         
         if [[ "$jail" == "sshd" ]]; then
             echo -e "${CYAN}[ 🛡️  ЗАЩИТА SSH (Брутфорс паролей) ]${NC}"
-            echo -e "${GRAY}  Мониторинг лога: /var/log/auth.log${NC}"
         else
             echo -e "${CYAN}[ 🛡️  ЗАЩИТА NGINX (Reality + XHTTP + Сканеры) ]${NC}"
-            echo -e "${GRAY}  Мониторинг: access.log & stream_scanners.log${NC}"
         fi
 
         echo -e "  ├─ ⚠️  Подозрительных прямо сейчас:   ${YELLOW}${cur_fail:-0}${NC}"
@@ -98,8 +171,6 @@ show_f2b_stats() {
 f2b_unban() {
     while true; do
         clear; echo -e "${MAGENTA}=== РАЗБАН И УПРАВЛЕНИЕ IP ===${NC}"
-        
-        # Получаем списки IP из разных тюрем
         local SSH_BANS=$(fail2ban-client get sshd banip 2>/dev/null)
         local NGINX_BANS=$(fail2ban-client get nginx-scanners banip 2>/dev/null)
         
@@ -108,39 +179,18 @@ f2b_unban() {
         fi
 
         echo -e "${CYAN}Список заблокированных IP:${NC}"
-        declare -a BAN_IP_ARRAY
-        declare -a BAN_JAIL_ARRAY
-        local i=1
-        
-        # Сначала выводим тех, кто за SSH
-        for ip in $SSH_BANS; do
-            echo -e "  ${YELLOW}[$i]${NC} $ip ${BLUE}[SSH]${NC}"
-            BAN_IP_ARRAY[$i]=$ip
-            BAN_JAIL_ARRAY[$i]="sshd"
-            ((i++))
-        done
-        
-        # Затем тех, кто за NGINX
-        for ip in $NGINX_BANS; do
-            echo -e "  ${YELLOW}[$i]${NC} $ip ${MAGENTA}[NGINX]${NC}"
-            BAN_IP_ARRAY[$i]=$ip
-            BAN_JAIL_ARRAY[$i]="nginx-scanners"
-            ((i++))
-        done
+        declare -a BAN_IP_ARRAY; declare -a BAN_JAIL_ARRAY; local i=1
+        for ip in $SSH_BANS; do echo -e "  ${YELLOW}[$i]${NC} $ip ${BLUE}[SSH]${NC}"; BAN_IP_ARRAY[$i]=$ip; BAN_JAIL_ARRAY[$i]="sshd"; ((i++)); done
+        for ip in $NGINX_BANS; do echo -e "  ${YELLOW}[$i]${NC} $ip ${MAGENTA}[NGINX]${NC}"; BAN_IP_ARRAY[$i]=$ip; BAN_JAIL_ARRAY[$i]="nginx-scanners"; ((i++)); done
 
         echo -e "\nВыберите ${YELLOW}НОМЕР${NC} для разблокировки или ${YELLOW}0${NC} для выхода:"
         read -p ">> " ch
         [[ "$ch" == "0" || -z "$ch" ]] && return
-        
         if [[ "$ch" =~ ^[0-9]+$ ]] && [ "$ch" -lt "$i" ] && [ "$ch" -gt 0 ]; then
             local TARGET_IP="${BAN_IP_ARRAY[$ch]}"
             local TARGET_JAIL="${BAN_JAIL_ARRAY[$ch]}"
-            
             fail2ban-client set "$TARGET_JAIL" unbanip "$TARGET_IP" >/dev/null 2>&1
-            echo -e "${GREEN}IP $TARGET_IP успешно разблокирован из секции $TARGET_JAIL!${NC}"
-            sleep 1
-        else
-            echo -e "${RED}Ошибка: Неверный номер.${NC}"; sleep 1
+            echo -e "${GREEN}IP $TARGET_IP разблокирован!${NC}"; sleep 1
         fi
     done
 }
@@ -148,11 +198,10 @@ f2b_unban() {
 f2b_whitelist() {
     while true; do
         clear; echo -e "${MAGENTA}=== БЕЛЫЙ СПИСОК (WHITELIST) ===${NC}"
-        echo -e "${GRAY}IP-адреса, которые игнорируются при блокировках.${NC}\n"
         local i=1; declare -a WL_ARRAY
         while read -r line; do
             if [[ -n "$line" ]]; then
-                local RAW_IP=$(echo "$line" | awk '{print $1}'); local COMMENT=$(echo "$line" | cut -d'#' -f2- | sed 's/^ //'); [[ "$RAW_IP" == "$COMMENT" ]] && COMMENT="Без описания"
+                local RAW_IP=$(echo "$line" | awk '{print $1}'); local COMMENT=$(echo "$line" | cut -d'#' -f2- | sed 's/^ //')
                 echo -e "  ${YELLOW}[$i]${NC} ${CYAN}${RAW_IP}${NC} \t(Имя: ${COMMENT})"; WL_ARRAY[$i]="$line"; ((i++))
             fi
         done < "$WHITELIST_FILE"
@@ -161,33 +210,32 @@ f2b_whitelist() {
         echo -e "\n ${GREEN}1.${NC} Добавить IP | ${RED}2.${NC} Удалить IP | ${CYAN}0.${NC} Назад"
         read -p ">> " ch
         case $ch in
-            1) read -p "Впишите IP: " ip; [[ $ip =~ ^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$ ]] && { awk '{print $1}' "$WHITELIST_FILE" | grep -q "^$ip$" && echo -e "${YELLOW}Уже в списке!${NC}" || { read -p "Краткое описание: " name; [[ -z "$name" ]] && name="Вручную"; echo "$ip # $name" >> "$WHITELIST_FILE"; ufw allow from $ip comment "Whitelist" >/dev/null 2>&1; install_fail2ban >/dev/null 2>&1; ufw_global_setup >/dev/null 2>&1; echo -e "${GREEN}Успешно добавлен!${NC}"; }; } || echo "Ошибка IP"; sleep 1 ;;
-            2) read -p "Впишите НОМЕР: " num; [[ "$num" =~ ^[0-9]+$ ]] && [ "$num" -lt "$i" ] && [ "$num" -gt 0 ] && { grep -v -x -F "${WL_ARRAY[$num]}" "$WHITELIST_FILE" > /tmp/wl_tmp && mv /tmp/wl_tmp "$WHITELIST_FILE"; install_fail2ban >/dev/null 2>&1; ufw_global_setup >/dev/null 2>&1; echo -e "${GREEN}Удалено.${NC}"; }; sleep 1 ;;
+            1) read -p "Впишите IP: " ip; [[ $ip =~ ^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$ ]] && { read -p "Описание: " name; echo "$ip # $name" >> "$WHITELIST_FILE"; ufw allow from $ip comment "Whitelist" >/dev/null 2>&1; install_fail2ban; ufw_global_setup >/dev/null 2>&1; echo -e "${GREEN}Добавлен!${NC}"; }; sleep 1 ;;
+            2) read -p "Впишите НОМЕР: " num; [[ "$num" =~ ^[0-9]+$ ]] && [ "$num" -lt "$i" ] && [ "$num" -gt 0 ] && { grep -v -x -F "${WL_ARRAY[$num]}" "$WHITELIST_FILE" > /tmp/wl_tmp && mv /tmp/wl_tmp "$WHITELIST_FILE"; install_fail2ban; ufw_global_setup >/dev/null 2>&1; echo -e "${GREEN}Удалено.${NC}"; }; sleep 1 ;;
             0) return ;;
         esac
     done
 }
 
+# --- ГЛАВНОЕ МЕНЮ МОДУЛЯ ---
 menu_fail2ban() {
     while true; do
         clear
         echo -e "${BLUE}======================================================${NC}"
         echo -e "${BOLD}${MAGENTA}  👮 УПРАВЛЕНИЕ ЗАЩИТОЙ (FAIL2BAN) ${NC}$(get_f2b_status)"
-        echo -e "${GRAY} Блокирует хакеров, подбирающих пароли и уязвимости.${NC}"
+        echo -e "${GRAY} Мощная защита от брутфорса и сканеров РКН.${NC}"
         echo -e "${BLUE}======================================================${NC}"
         echo -e " ${YELLOW}1.${NC} 📊 Подробная статистика блокировок"
-        echo -e "    ${GRAY}└─ Показывает, сколько ботов сейчас в бане.${NC}"
         echo -e " ${YELLOW}2.${NC} ✅ Разбан IP (Интерактивно)"
-        echo -e "    ${GRAY}└─ Позволяет вытащить IP-адрес из черного списка.${NC}"
         echo -e " ${YELLOW}3.${NC} 🌟 Управление Белым Списком (Whitelist)"
-        echo -e "    ${GRAY}└─ Добавление своих IP, чтобы их никогда не банили.${NC}"
-        echo -e " ${YELLOW}4.${NC} 🕵️  Смотреть логи Fail2Ban (Live)"
-        echo -e "    ${GRAY}└─ Журнал работы снайпера (кого банит прямо сейчас).${NC}"
+        echo -e " ${YELLOW}4.${NC} ⚙️  Настройки агрессивности (Bantime/Retry)"
+        echo -e " ${YELLOW}5.${NC} 🕵️  Смотреть логи Fail2Ban (Live)"
         echo -e " ${CYAN}0.${NC} ↩️  Назад"
         read -p ">> " choice
         case $choice in
             1) show_f2b_stats ;; 2) f2b_unban ;; 3) f2b_whitelist ;;
-            4) clear; echo -e "${YELLOW}Нажмите Ctrl+C для выхода...${NC}"; tail -f /var/log/fail2ban.log ;;
+            4) f2b_settings_menu ;;
+            5) clear; echo -e "${YELLOW}Нажмите Ctrl+C для выхода...${NC}"; tail -f /var/log/fail2ban.log ;;
             0) return ;;
         esac
     done
