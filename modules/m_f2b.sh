@@ -66,7 +66,7 @@ EOF
 }
 
 show_f2b_stats() {
-    clear; echo -e "${MAGENTA}=== СТАТИСТИКА БЛОКИРОВОК FAIL2BAN ===${NC}\n"
+    clear; echo -e "${MAGENTA}=== ПОДРОБНАЯ СТАТИСТИКА ЗАЩИТЫ FAIL2BAN ===${NC}\n"
     for jail in sshd nginx-scanners; do
         local raw_status=$(fail2ban-client status "$jail" 2>/dev/null || echo "")
         [[ -z "$raw_status" ]] && continue
@@ -76,14 +76,21 @@ show_f2b_stats() {
         local cur_ban=$(echo "$raw_status" | grep "Currently banned:" | sed 's/[^0-9]*//g')
         local tot_ban=$(echo "$raw_status" | grep "Total banned:" | sed 's/[^0-9]*//g')
         local banned_ips=$(echo "$raw_status" | grep "Banned IP list:" | awk -F':' '{print $2}' | xargs)
-        [[ -z "$banned_ips" ]] && banned_ips="Никого нет в бане"
+        [[ -z "$banned_ips" ]] && banned_ips="Чисто"
         
-        [[ "$jail" == "sshd" ]] && echo -e "${CYAN}[ 🛡️  Защита SSH (Брутфорс паролей) ]${NC}" || echo -e "${CYAN}[ 🛡️  Защита NGINX (Сканеры уязвимостей) ]${NC}"
-        echo -e "  └─ ⚠️  Ошибок прямо сейчас:         ${YELLOW}${cur_fail:-0}${NC}"
-        echo -e "  └─ 📈 Всего попыток взлома:        ${YELLOW}${tot_fail:-0}${NC}"
-        echo -e "  └─ ⛔ Сейчас в бане (IP):          ${RED}${cur_ban:-0}${NC}"
-        echo -e "  └─ 💀 Всего забанено за всё время: ${RED}${tot_ban:-0}${NC}"
-        echo -e "  └─ 🚫 Список заблокированных IP:   ${RED}${banned_ips}${NC}\n"
+        if [[ "$jail" == "sshd" ]]; then
+            echo -e "${CYAN}[ 🛡️  ЗАЩИТА SSH (Брутфорс паролей) ]${NC}"
+            echo -e "${GRAY}  Мониторинг лога: /var/log/auth.log${NC}"
+        else
+            echo -e "${CYAN}[ 🛡️  ЗАЩИТА NGINX (Reality + XHTTP + Сканеры) ]${NC}"
+            echo -e "${GRAY}  Мониторинг: access.log & stream_scanners.log${NC}"
+        fi
+
+        echo -e "  ├─ ⚠️  Подозрительных прямо сейчас:   ${YELLOW}${cur_fail:-0}${NC}"
+        echo -e "  ├─ 📈 Всего попыток атаки забанено:  ${YELLOW}${tot_fail:-0}${NC}"
+        echo -e "  ├─ ⛔ Заблокировано IP в данный момент: ${RED}${cur_ban:-0}${NC}"
+        echo -e "  ├─ 💀 Всего трупов за всё время:      ${RED}${tot_ban:-0}${NC}"
+        echo -e "  └─ 🚫 Список забаненных:             ${RED}${banned_ips}${NC}\n"
     done
     pause
 }
@@ -91,18 +98,50 @@ show_f2b_stats() {
 f2b_unban() {
     while true; do
         clear; echo -e "${MAGENTA}=== РАЗБАН И УПРАВЛЕНИЕ IP ===${NC}"
-        local SSH_BANS=$(fail2ban-client get sshd banip 2>/dev/null); local NGINX_BANS=$(fail2ban-client get nginx-scanners banip 2>/dev/null)
-        local UNIQUE_BANS=$(echo "$SSH_BANS $NGINX_BANS" | tr ' ' '\n' | sort -u | grep -v '^$')
-        [[ -z "$UNIQUE_BANS" ]] && { echo -e "${GREEN}Заблокированных IP нет! Все чисто.${NC}"; pause; return; }
+        
+        # Получаем списки IP из разных тюрем
+        local SSH_BANS=$(fail2ban-client get sshd banip 2>/dev/null)
+        local NGINX_BANS=$(fail2ban-client get nginx-scanners banip 2>/dev/null)
+        
+        if [[ -z "$SSH_BANS" && -z "$NGINX_BANS" ]]; then
+            echo -e "${GREEN}Заблокированных IP нет! Все чисто.${NC}"; pause; return
+        fi
 
-        echo -e "${CYAN}Список заблокированных IP:${NC}"; declare -a BAN_ARRAY; local i=1
-        for ip in $UNIQUE_BANS; do echo -e "  ${YELLOW}[$i]${NC} $ip"; BAN_ARRAY[$i]=$ip; ((i++)); done
+        echo -e "${CYAN}Список заблокированных IP:${NC}"
+        declare -a BAN_IP_ARRAY
+        declare -a BAN_JAIL_ARRAY
+        local i=1
+        
+        # Сначала выводим тех, кто за SSH
+        for ip in $SSH_BANS; do
+            echo -e "  ${YELLOW}[$i]${NC} $ip ${BLUE}[SSH]${NC}"
+            BAN_IP_ARRAY[$i]=$ip
+            BAN_JAIL_ARRAY[$i]="sshd"
+            ((i++))
+        done
+        
+        # Затем тех, кто за NGINX
+        for ip in $NGINX_BANS; do
+            echo -e "  ${YELLOW}[$i]${NC} $ip ${MAGENTA}[NGINX]${NC}"
+            BAN_IP_ARRAY[$i]=$ip
+            BAN_JAIL_ARRAY[$i]="nginx-scanners"
+            ((i++))
+        done
 
-        read -p $'\nНОМЕР или IP (0 - Назад): ' ch; [[ "$ch" == "0" || -z "$ch" ]] && return
-        if [[ "$ch" =~ ^[0-9]+$ ]] &&[ "$ch" -lt "$i" ] && [ "$ch" -gt 0 ]; then local TARGET_IP="${BAN_ARRAY[$ch]}"; else local TARGET_IP="$ch"; fi
-
-        fail2ban-client set sshd unbanip "$TARGET_IP" >/dev/null 2>&1; fail2ban-client set nginx-scanners unbanip "$TARGET_IP" >/dev/null 2>&1
-        echo -e "${GREEN}IP $TARGET_IP успешно разблокирован!${NC}"; sleep 1
+        echo -e "\nВыберите ${YELLOW}НОМЕР${NC} для разблокировки или ${YELLOW}0${NC} для выхода:"
+        read -p ">> " ch
+        [[ "$ch" == "0" || -z "$ch" ]] && return
+        
+        if [[ "$ch" =~ ^[0-9]+$ ]] && [ "$ch" -lt "$i" ] && [ "$ch" -gt 0 ]; then
+            local TARGET_IP="${BAN_IP_ARRAY[$ch]}"
+            local TARGET_JAIL="${BAN_JAIL_ARRAY[$ch]}"
+            
+            fail2ban-client set "$TARGET_JAIL" unbanip "$TARGET_IP" >/dev/null 2>&1
+            echo -e "${GREEN}IP $TARGET_IP успешно разблокирован из секции $TARGET_JAIL!${NC}"
+            sleep 1
+        else
+            echo -e "${RED}Ошибка: Неверный номер.${NC}"; sleep 1
+        fi
     done
 }
 
