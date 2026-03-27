@@ -9,15 +9,17 @@ install_fail2ban() {
     apt-get update -qq && apt-get install fail2ban -y -qq
     local WL_IPS=$(awk '{print $1}' "$WHITELIST_FILE" | grep -E '^[0-9]' | tr '\n' ' ')
     
-    cat << 'EOF' > /etc/fail2ban/filter.d/nginx-scanners.conf
-[Definition]
-failregex = ^<HOST> \- \- \[.*\] "(GET|POST|HEAD|PROPFIND|OPTIONS|PUT|DELETE).*?" (400|401|403|404|405|444) 
+    # СОЗДАЕМ ФИЛЬТР: Ловит и HTTP-ошибки, и TCP-сканеров из блока stream
+    cat << 'EOF' > /etc/fail2ban/filter.d/nginx-scanners.conf[Definition]
+failregex = ^<HOST> \- \- \[.*\] "(GET|POST|HEAD|PROPFIND|OPTIONS|PUT|DELETE).*?" (400|401|403|404|405|444)
+            ^<HOST>\s*\[[^\]]+\]\s*SNI:".*?"\s*RoutedTo:"unix:/dev/shm/nginx_external\.sock"
 ignoreregex =
 EOF
 
     local ACTIVE_SSH=$(grep -i "^Port" /etc/ssh/sshd_config | awk '{print $2}' | paste -sd "," -)
     [[ -z "$ACTIVE_SSH" ]] && ACTIVE_SSH="22"
 
+    # НАСТРАИВАЕМ JAIL: Указываем сразу ДВА файла логов
     cat << EOF > /etc/fail2ban/jail.local
 [DEFAULT]
 banaction = ufw
@@ -34,15 +36,22 @@ bantime = ${BANTIME}
 enabled  = true
 port     = anyport
 filter   = nginx-scanners
-logpath  = /opt/remnawave/nginx_logs/access.log
+# Читаем и внутренние логи (HTTP), и наружные логи (TCP/SNI)
+logpath  = /var/log/nginx_custom/access.log
+           /var/log/nginx_custom/stream_scanners.log
 maxretry = 3
 findtime = 600
 bantime  = ${BANTIME}
 EOF
 
+    # Убедимся, что файлы логов существуют, чтобы Fail2Ban не выдал ошибку при старте
+    mkdir -p /var/log/nginx_custom
+    touch /var/log/nginx_custom/access.log
+    touch /var/log/nginx_custom/stream_scanners.log
+
     systemctl enable fail2ban > /dev/null 2>&1
     systemctl restart fail2ban > /dev/null 2>&1
-    echo -e "${GREEN}[+] Fail2Ban активирован.${NC}"
+    echo -e "${GREEN}[+] Fail2Ban активирован и настроен на новую архитектуру Nginx.${NC}"
 }
 
 show_f2b_stats() {
