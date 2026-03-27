@@ -51,7 +51,6 @@ run_single_scan() {
         [[ -z "$target" ]] && return
     fi
 
-    # Хак для отключения бесконечного поиска, если передан IP
     if [[ "$target" =~ ^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$ ]]; then target="${target}/32"; fi
 
     read -p ">> Порт(ы) через запятую (Enter = 443): " s_port
@@ -69,11 +68,8 @@ run_single_scan() {
     for current_port in "${PORT_ARRAY[@]}"; do
         echo -e "\n${CYAN}>>> СКАНИРОВАНИЕ ПОРТА: ${current_port} <<<${NC}"
         
-        # Запускаем в Verbose-режиме (-v), чтобы вытащить ВСЮ информацию
         ./RealiTLScanner -addr "$target" -port "$current_port" -timeout 5 -v 2>&1 | while read -r line; do
-            
             if [[ "$line" == *"Connected to target"* ]]; then
-                # Парсим скрытую техническую информацию
                 local feas=$(echo "$line" | grep -oP 'feasible=\K[^ ]+')
                 local ip=$(echo "$line" | grep -oP 'ip=\K[^ ]+')
                 local tls=$(echo "$line" | grep -oP 'tls="?\K[^"]+' | tr -d '"')
@@ -119,7 +115,7 @@ analyze_results() {
     local total_lines=$(wc -l < "$file" 2>/dev/null)
     if [[ "$total_lines" -le 1 ]]; then
         echo -e "\n${RED}[!] В отчете пусто. Сканер ничего не нашел.${NC}"
-        pause; return
+        return
     fi
 
     clear
@@ -129,7 +125,7 @@ analyze_results() {
     echo -e "${CYAN}💡 На чем основывается наш ТОП?${NC}"
     echo -e "${GRAY}1. Корпоративные сертификаты (Google, Apple, DigiCert) - Высший приоритет.${NC}"
     echo -e "${GRAY}2. Cloudflare / GlobalSign / Sectigo - Средний приоритет.${NC}"
-    echo -e "${GRAY}3. Let's Encrypt / ZeroSSL - Низший приоритет (слишком часто банятся).${NC}\n"
+    echo -e "${GRAY}3. Let's Encrypt / ZeroSSL - Низший приоритет.${NC}\n"
     
     local my_ip=$(curl -s --max-time 3 ipinfo.io/ip 2>/dev/null)
     local my_geo=$(curl -s --max-time 3 ipinfo.io/country 2>/dev/null | tr -d '[:space:]')
@@ -179,10 +175,9 @@ analyze_results() {
             echo -e "   └─ IP: $ip (Порт: \033[1;36m$port\033[0m) | ГЕО: \033[1;33m$geo\033[0m | Издатель: $issuer\n"
         done
     fi
-    pause
 }
 
-# --- 4. МАССОВЫЙ СКАНЕР С ЛИМИТАМИ (ДЛЯ ПУНКТОВ 2-5) ---
+# --- 4. МАССОВЫЙ СКАНЕР С ЛИМИТАМИ И СОХРАНЕНИЕМ (ДЛЯ ПУНКТОВ 2-5) ---
 run_scanner() {
     local mode=$1
     local target=$2
@@ -204,8 +199,7 @@ run_scanner() {
     read -p ">> Таймаут в сек (Enter = 5): " s_timeout; s_timeout=${s_timeout:-5}
     
     echo -e "\n${YELLOW}💡 Лимит поиска${NC}"
-    echo -e "${GRAY}Вы можете указать, после какого количества найденных SNI скрипт должен остановиться.${NC}"
-    read -p ">> Сколько SNI найти? (Enter = 0, искать бесконечно / сканировать весь список): " s_limit
+    read -p ">> Сколько SNI найти? (Enter = 0, искать бесконечно / до конца списка): " s_limit
     s_limit=${s_limit:-0}
 
     echo -e "\n${YELLOW}💡 Имя файла (Тег)${NC}"
@@ -253,7 +247,20 @@ run_scanner() {
     done
 
     echo -e "\n${GREEN}[+] Сканирование завершено!${NC}"
+    
+    # Сначала анализируем
     analyze_results "$SCANNER_DIR/$out_file"
+
+    # Затем спрашиваем про сохранение
+    echo -e "\n${BLUE}======================================================${NC}"
+    read -p ">> Сохранить этот отчет в Менеджере Отчетов? (Y/n): " keep_report
+    if [[ "$keep_report" == "n" || "$keep_report" == "N" ]]; then
+        rm -f "$SCANNER_DIR/$out_file" 2>/dev/null
+        echo -e "${YELLOW}Отчет удален.${NC}"
+    else
+        echo -e "${GREEN}Отчет успешно сохранен!${NC} (Имя: $out_file)"
+    fi
+    pause
 }
 
 # --- 5. МЕНЕДЖЕР ОТЧЕТОВ ---
@@ -278,18 +285,30 @@ manage_reports() {
         echo -e " 👉 ${YELLOW}НОМЕР${NC} - Посмотреть сырую таблицу CSV."
         echo -e " 👉 ${GREEN}aНОМЕР${NC} (напр. ${BOLD}a1${NC}) - Запустить Умный Анализ SNI (Фильтрация)."
         echo -e " 👉 ${RED}dНОМЕР${NC} (напр. ${BOLD}d1${NC}) - Удалить отчет."
+        echo -e " 👉 ${RED}D${NC} - Удалить ВСЕ отчеты разом."
         echo -e " ${CYAN}0.${NC} Назад"
         
         read -p ">> " r_choice
 
         if [[ "$r_choice" == "0" ]]; then return; fi
         
-        if [[ "$r_choice" =~ ^d([0-9]+)$ ]]; then
+        if [[ "$r_choice" == "D" || "$r_choice" == "d" ]]; then
+            echo -e "\n${RED}⚠️ ВНИМАНИЕ: Вы собираетесь удалить ВСЕ сохраненные отчеты!${NC}"
+            read -p "Вы уверены? (y/N): " confirm_del
+            if [[ "$confirm_del" == "y" || "$confirm_del" == "Y" ]]; then
+                rm -f "$SCANNER_DIR"/*.csv 2>/dev/null
+                echo -e "${GREEN}Все отчеты успешно удалены!${NC}"
+            fi
+            sleep 1
+        elif [[ "$r_choice" =~ ^d([0-9]+)$ ]]; then
             local idx=$((${BASH_REMATCH[1]}-1))
             [[ -n "${CSV_FILES[$idx]}" ]] && rm -f "${CSV_FILES[$idx]}" && echo -e "${GREEN}Файл удален!${NC}" && sleep 1
         elif [[ "$r_choice" =~ ^a([0-9]+)$ ]]; then
             local idx=$((${BASH_REMATCH[1]}-1))
-            [[ -n "${CSV_FILES[$idx]}" ]] && analyze_results "${CSV_FILES[$idx]}"
+            if [[ -n "${CSV_FILES[$idx]}" ]]; then
+                analyze_results "${CSV_FILES[$idx]}"
+                pause
+            fi
         elif [[ "$r_choice" =~ ^[0-9]+$ ]]; then
             local idx=$((r_choice-1))
             if [[ -n "${CSV_FILES[$idx]}" ]]; then
