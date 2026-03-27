@@ -4,35 +4,36 @@
 show_prereq_instructions() {
     clear
     echo -e "${MAGENTA}======================================================================${NC}"
-    echo -e "${BOLD}${YELLOW} ⚠️ ИНСТРУКЦИЯ: ИДЕАЛЬНАЯ МАСКИРОВКА XRAY (REALITY + XHTTP) ⚠️${NC}"
+    echo -e "${BOLD}${YELLOW} ⚠️ ИНСТРУКЦИЯ ДЛЯ ЧАЙНИКОВ: НАСТРОЙКА NGINX И ЗАЩИТЫ ⚠️${NC}"
     echo -e "${MAGENTA}======================================================================${NC}"
-    echo -e "${CYAN} Для того чтобы оба протокола (Reality и XHTTP) работали на 443 порту${NC}"
-    echo -e "${CYAN} и защита Fail2Ban видела реальные IP хакеров, выполните 3 шага:${NC}\n"
+    echo -e "${CYAN} Чтобы Fail2Ban видел реальные IP хакеров, а не локальные адреса,${NC}"
+    echo -e "${CYAN} и мог их забанить, вам нужно выполнить 3 простых шага:${NC}\n"
 
-    echo -e "${GREEN}${BOLD}[ШАГ 1] Настройка в панели (Xray Inbounds)${NC}"
-    echo -e " В настройках подключения REALITY найдите блок ${YELLOW}realitySettings${NC} и укажите:"
-    echo -e " ${RED}\"dest\": \"www.yandex.com:443\"${NC}  ====>  ${GREEN}\"dest\": \"/dev/shm/nginx.sock\"${NC} ${GRAY}(или target)${NC}"
-    echo -e " ${RED}\"xver\": 0${NC}  ====>  ${GREEN}\"xver\": 1${NC} ${GRAY}(ОБЯЗАТЕЛЬНО для передачи IP в Nginx!)${NC}\n"
+    echo -e "${GREEN}${BOLD} [ШАГ 1] Настройка в панели управления (Xray)${NC}"
+    echo -e " В настройках подключения REALITY найдите параметры и измените их:"
+    echo -e " ${RED}\"target\": \"www.yandex.com:443\"${NC} ===> ${GREEN}\"target\": \"/dev/shm/nginx.sock\"${NC} ${GRAY}(или dest)${NC}"
+    echo -e " ${RED}\"xver\": 0${NC} ===> ${GREEN}\"xver\": 1${NC} ${GRAY}(ОБЯЗАТЕЛЬНО! Это передает IP-адрес клиента в Nginx)${NC}\n"
 
-    echo -e "${GREEN}${BOLD}[ШАГ 2] Проброс логов в Docker (${YELLOW}docker-compose.yml${GREEN})${NC}"
-    echo -e " Добавьте в ${CYAN}volumes${NC} контейнера Nginx (чтобы логи не удалялись при рестарте):"
+    echo -e "${GREEN}${BOLD} [ШАГ 2] Сохранение логов (Файл: ${YELLOW}/opt/remnawave/docker-compose.yml${GREEN})${NC}"
+    echo -e " Чтобы логи не удалялись при перезагрузке, найдите контейнер ${CYAN}remnawave-nginx${NC}"
+    echo -e " и добавьте в блок ${CYAN}volumes:${NC} эту строчку:"
     echo -e " ${GREEN}- /opt/remnawave/nginx_logs:/var/log/nginx_custom${NC}\n"
 
-    echo -e "${GREEN}${BOLD} [ШАГ 3] Двухуровневый Nginx (${YELLOW}nginx.conf${GREEN})${NC}"
-    echo -e " Ваша архитектура должна состоять из ДВУХ блоков (Матрёшка):\n"
+    echo -e "${GREEN}${BOLD}[ШАГ 3] Настройка самого Nginx (Файл: ${YELLOW}/opt/remnawave/nginx.conf${GREEN})${NC}"
+    echo -e " Вы можете использовать простой (старый) конфиг или продвинутый (Stream)."
+    echo -e " ${YELLOW}ГЛАВНОЕ ПРАВИЛО ДЛЯ ЛЮБОГО КОНФИГА:${NC} Укажите правильные пути для логов"
+    echo -e " внутри блока ${CYAN}server { ... }${NC}, иначе Fail2Ban ничего не увидит!\n"
     
-    echo -e " ${YELLOW}1. Наружный блок stream { ... } (ДО блока http!)${NC}"
-    echo -e "    Он слушает ${CYAN}nginx.sock proxy_protocol;${NC} и работает как умный сортировщик."
-    echo -e "    Пишет лог сканеров: ${GREEN}access_log /var/log/nginx_custom/stream_scanners.log stream_routing;${NC}"
-    echo -e "    Свой домен отправляет внутрь, а чужие (РКН) - наружу (на wp.pl или Яндекc).\n"
-
-    echo -e " ${YELLOW}2. Внутренний блок http { server { ... } } (Для вашего XHTTP)${NC}"
-    echo -e "    Слушает ВНУТРЕННИЙ сокет: ${CYAN}listen unix:/dev/shm/nginx_http.sock proxy_protocol ssl;${NC}"
-    echo -e "    Читает IP: ${CYAN}set_real_ip_from unix:; real_ip_header proxy_protocol;${NC}"
-    echo -e "    Пишет HTTP лог: ${GREEN}access_log /var/log/nginx_custom/access.log;${NC}\n"
+    echo -e " ${GRAY}Добавьте или замените эти строки:${NC}"
+    echo -e " ${GREEN}access_log /var/log/nginx_custom/access.log;${NC}"
+    echo -e " ${GREEN}error_log  /var/log/nginx_custom/error.log;${NC}\n"
+    
+    echo -e " ${GRAY}Также для простого конфига обязательно добавьте чтение IP:${NC}"
+    echo -e " ${GREEN}set_real_ip_from unix:;${NC}"
+    echo -e " ${GREEN}real_ip_header proxy_protocol;${NC}\n"
 
     echo -e "${MAGENTA}======================================================================${NC}"
-    echo -e "${YELLOW} После настройки конфигов ПЕРЕСОБЕРИТЕ контейнеры:${NC}"
+    echo -e "${YELLOW} После внесения изменений ПЕРЕСОБЕРИТЕ КОНТЕЙНЕРЫ командой:${NC}"
     echo -e "${CYAN} cd /opt/remnawave && docker compose down && docker compose build --no-cache && docker compose up -d${NC}"
     echo -e "${MAGENTA}======================================================================${NC}"
     pause
