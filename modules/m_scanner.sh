@@ -297,7 +297,38 @@ run_mass_recon() {
     pause
 }
 
-# --- 3. УМНЫЙ АНАЛИЗАТОР (ДЛЯ МАССОВЫХ СКАНОВ) ---
+# --- 3. УМНЫЙ АНАЛИЗАТОР (АВТОМАТИЧЕСКИЙ ВЫВОД ДЛЯ МАССОВЫХ СКАНОВ ПО СПИСКУ) ---
+analyze_results_auto() {
+    local file=$1
+    local total_lines=$(wc -l < "$file" 2>/dev/null)
+    if [[ "$total_lines" -le 1 ]]; then echo -e "${RED}[!] Для этой цели ничего не найдено.${NC}"; return; fi
+
+    local sorted_data=$(awk -F, '
+    NR>1 {
+        issuer = tolower($4); weight = 5;
+        if (issuer ~ /google|apple|microsoft/) weight = 1;
+        else if (issuer ~ /digicert|globalsign|sectigo/) weight = 2;
+        else if (issuer ~ /cloudflare/) weight = 3;
+        else if (issuer ~ /let'\''s encrypt|zerossl/) weight = 4;
+        if (weight < 5) {
+            port = $6 ? $6 : "443";
+            print weight "|" $3 "|" $1 "|" port "|" $5 "|" $4;
+        }
+    }' "$file" | sort -t'|' -k1,1n | uniq)
+
+    local best=$(echo "$sorted_data" | head -n 5)
+    if [[ -z "$best" ]]; then echo -e "${YELLOW}Надежных SNI кандидатов не найдено.${NC}"
+    else
+        echo -e "${GREEN}🏆 ТОП-5 ЛУЧШИХ SNI:${NC}"
+        echo "$best" | while IFS='|' read -r weight domain ip port geo issuer; do
+            if [[ "$weight" == "1" ]]; then echo -e "💎 \033[1;36m$domain\033[0m"
+            elif [[ "$weight" == "2" || "$weight" == "3" ]]; then echo -e "📍 \033[1;32m$domain\033[0m"
+            else echo -e "🔸 \033[0;32m$domain\033[0m"; fi
+            echo -e "   └─ IP: $ip (Порт: \033[1;36m$port\033[0m) | ГЕО: \033[1;33m$geo\033[0m | Издатель: $issuer"
+        done
+    fi
+}
+
 analyze_results() {
     local file=$1
     [[ ! -f "$file" ]] && { echo -e "${RED}[!] Файл $file не найден.${NC}"; return; }
@@ -331,7 +362,9 @@ analyze_results() {
         else if (issuer ~ /digicert|globalsign|sectigo/) weight = 2;
         else if (issuer ~ /cloudflare/) weight = 3;
         else if (issuer ~ /let'\''s encrypt|zerossl/) weight = 4;
+        
         if (target_geo != "" && $5 != target_geo) next;
+        
         if (weight < 5) {
             port = $6 ? $6 : "443";
             print weight "|" $3 "|" $1 "|" port "|" $5 "|" $4;
@@ -353,7 +386,7 @@ analyze_results() {
     fi
 }
 
-# --- 4. МАССОВЫЙ СКАНЕР (ДЛЯ ПУНКТОВ 2-5) С ПОЯСНЕНИЯМИ ---
+# --- 4. МАССОВЫЙ СКАНЕР (ДЛЯ ПУНКТОВ 2-5) ---
 run_scanner() {
     local mode=$1
     local target=$2
@@ -383,24 +416,20 @@ run_scanner() {
     echo -e "${YELLOW}1. Целевые порты (-port)${NC}"
     echo -e "${GRAY}Обычно маскировка Reality работает на HTTPS порту 443.${NC}"
     echo -e "${GRAY}Но можно указать несколько (напр: 443, 8443). Скрипт проверит их по очереди.${NC}"
-    read -p ">> Порт(ы) через запятую (Enter = 443): " s_port
-    s_port=${s_port:-443}
+    read -p ">> Порт(ы) через запятую (Enter = 443): " s_port; s_port=${s_port:-443}
     IFS=',' read -ra PORT_ARRAY <<< "${s_port// /}"
 
     echo -e "\n${YELLOW}2. Количество потоков (-thread)${NC}"
     echo -e "${GRAY}Сколько IP проверять одновременно. Больше = быстрее, но может нагрузить сервер.${NC}"
-    read -p ">> Потоков (Enter = 10, макс 50): " s_thread
-    s_thread=${s_thread:-10}
+    read -p ">> Потоков (Enter = 10, макс 50): " s_thread; s_thread=${s_thread:-10}
 
     echo -e "\n${YELLOW}3. Таймаут ответа (-timeout)${NC}"
     echo -e "${GRAY}Сколько секунд ждать ответа от сервера. 5 секунд оптимально для хороших сетей.${NC}"
-    read -p ">> Таймаут в сек (Enter = 5): " s_timeout
-    s_timeout=${s_timeout:-5}
+    read -p ">> Таймаут в сек (Enter = 5): " s_timeout; s_timeout=${s_timeout:-5}
     
     echo -e "\n${YELLOW}4. Лимит поиска (Стоп-кран)${NC}"
     echo -e "${GRAY}Скрипт остановится автоматически, когда найдет нужное количество рабочих SNI.${NC}"
-    read -p ">> Сколько успешных SNI найти? (Enter = 0, искать до конца списка): " s_limit
-    s_limit=${s_limit:-0}
+    read -p ">> Сколько успешных SNI найти? (Enter = 0, искать до конца списка): " s_limit; s_limit=${s_limit:-0}
 
     echo -e "\n${YELLOW}5. Имя файла (Тег)${NC}"
     echo -e "${GRAY}Добавьте понятную метку (напр. Hetzner), чтобы потом легко найти этот отчет.${NC}"
@@ -426,7 +455,6 @@ run_scanner() {
         ./RealiTLScanner -"$mode" "$target" -port "$current_port" -thread "$s_thread" -timeout "$s_timeout" -out "$tmp_csv" >/dev/null 2>&1 &
         local SCAN_PID=$!
         
-        # Безопасный перехват Ctrl+C
         trap 'kill $SCAN_PID 2>/dev/null; echo -e "\n\n${YELLOW}🛑 Сканирование прервано пользователем. Переход к анализу...${NC}"; break' INT
 
         while kill -0 $SCAN_PID 2>/dev/null; do
@@ -451,7 +479,7 @@ run_scanner() {
             sleep 1
         done
         echo -e ""
-        trap - INT # Отключаем перехват после завершения
+        trap - INT
 
         if [[ -f "$tmp_csv" ]]; then
             tail -n +2 "$tmp_csv" | awk -v p="$current_port" -F',' '{print $0","p}' >> "$SCANNER_DIR/$out_file"
@@ -470,6 +498,100 @@ run_scanner() {
     else
         echo -e "${GREEN}Отчет успешно сохранен!${NC} (Имя: $out_file)"
     fi
+    pause
+}
+
+# --- 4.1 МАССОВЫЙ СКАН ПОДСЕТЕЙ ПО СПИСКУ (ДЛЯ IN.TXT) ---
+run_mass_subnet_scan() {
+    if [[ ! -s "$INPUT_FILE" ]]; then echo -e "${RED}Файл $INPUT_FILE пуст!${NC}"; sleep 2; return; fi
+
+    clear
+    echo -e "${MAGENTA}======================================================${NC}"
+    echo -e "${BOLD} 🔍 РЕЖИМ: МАССОВЫЙ СКАН ПОДСЕТЕЙ ПО СПИСКУ${NC}"
+    echo -e "${MAGENTA}======================================================${NC}"
+    echo -e "${CYAN}Для чего это нужно?${NC}"
+    echo -e "${GRAY}Скрипт берет каждый IP из вашего списка, автоматически превращает его${NC}"
+    echo -e "${GRAY}в подсеть (/24) и ищет 'соседей' с хорошими SNI-доменами.${NC}"
+    echo -e "${GRAY}Для каждой подсети будет выведен свой личный ТОП кандидатов!${NC}\n"
+
+    read -p ">> Порт(ы) через запятую (Enter = 443): " s_port; s_port=${s_port:-443}
+    IFS=',' read -ra PORT_ARRAY <<< "${s_port// /}"
+    read -p ">> Потоков (Enter = 10, макс 50): " s_thread; s_thread=${s_thread:-10}
+    read -p ">> Таймаут в сек (Enter = 5): " s_timeout; s_timeout=${s_timeout:-5}
+    read -p ">> Сколько успешных SNI найти для КАЖДОГО IP? (Enter = 0, до конца): " s_limit; s_limit=${s_limit:-0}
+    
+    echo -e "\n${GREEN}[*] ЗАПУСК СКАНИРОВАНИЯ...${NC}"
+    echo -e "${RED}⚠️ Нажатие Ctrl+C прервет скан текущей подсети и перейдет к следующей в списке!${NC}\n"
+    
+    cd "$SCANNER_DIR" || return
+    export PATH=/usr/local/go/bin:$PATH
+
+    while IFS= read -r raw_target; do
+        [[ -z "$raw_target" ]] && continue
+        
+        local target=$raw_target
+        # Превращаем голый IP в подсеть /24 для поиска соседей
+        if [[ "$target" =~ ^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+            target=$(echo "$target" | awk -F. '{print $1"."$2"."$3".0/24"}')
+        fi
+
+        local safe_target=$(echo "$target" | sed 's/[^a-zA-Z0-9]/_/g' | cut -c 1-15)
+        local out_file="scan_list_${safe_target}_$(date +%s).csv"
+
+        echo -e "${BLUE}======================================================${NC}"
+        echo -e "${CYAN}🎯 СКАНИРОВАНИЕ ПОДСЕТИ: ${YELLOW}$target${NC}"
+        echo -e "${BLUE}======================================================${NC}"
+
+        echo "IP,ORIGIN,CERT_DOMAIN,CERT_ISSUER,GEO_CODE,PORT" > "$SCANNER_DIR/$out_file"
+
+        for current_port in "${PORT_ARRAY[@]}"; do
+            local tmp_csv="tmp_scan_${current_port}.csv"
+            
+            ./RealiTLScanner -addr "$target" -port "$current_port" -thread "$s_thread" -timeout "$s_timeout" -out "$tmp_csv" >/dev/null 2>&1 &
+            local SCAN_PID=$!
+            
+            trap 'kill $SCAN_PID 2>/dev/null; echo -e "\n${YELLOW}🛑 Пропуск текущей подсети...${NC}"; break' INT
+
+            while kill -0 $SCAN_PID 2>/dev/null; do
+                if [[ -f "$tmp_csv" ]]; then
+                    local current_count=$(cat "$tmp_csv" 2>/dev/null | wc -l)
+                    local actual_count=$((current_count > 0 ? current_count - 1 : 0))
+                    local last_sni=$(tail -n 1 "$tmp_csv" 2>/dev/null | awk -F, '{print $3}')
+                    
+                    if [[ -n "$last_sni" && "$last_sni" != "CERT_DOMAIN" ]]; then
+                        echo -ne "\r\033[K${CYAN}⏳ Порт $current_port | Найдено SNI: ${GREEN}${actual_count}${NC} | Последний: ${YELLOW}${last_sni}${NC}"
+                    else
+                        echo -ne "\r\033[K${CYAN}⏳ Порт $current_port | Найдено SNI: ${GREEN}${actual_count}${NC}"
+                    fi
+                    
+                    if [[ "$s_limit" -gt 0 && "$actual_count" -ge "$s_limit" ]]; then
+                        echo -e "\n${GREEN}[+] Лимит ($s_limit) достигнут!${NC}"
+                        kill $SCAN_PID 2>/dev/null; break
+                    fi
+                else
+                    echo -ne "\r\033[K${CYAN}⏳ Порт $current_port | Запуск потоков...${NC}"
+                fi
+                sleep 1
+            done
+            echo -e ""
+            trap - INT
+
+            if [[ -f "$tmp_csv" ]]; then
+                tail -n +2 "$tmp_csv" | awk -v p="$current_port" -F',' '{print $0","p}' >> "$SCANNER_DIR/$out_file"
+                rm -f "$tmp_csv"
+            fi
+        done
+
+        # Выводим ТОП-5 для этой подсети без паузы
+        analyze_results_auto "$SCANNER_DIR/$out_file"
+        echo -e "\n${GRAY}Файл сохранен: $out_file${NC}\n"
+
+    done < "$INPUT_FILE"
+
+    echo -e "${GREEN}======================================================${NC}"
+    echo -e "${BOLD}✅ ВСЕ ЦЕЛИ ИЗ СПИСКА ОБРАБОТАНЫ!${NC}"
+    echo -e "${GREEN}======================================================${NC}"
+    echo -e "${GRAY}Сырые CSV файлы сохранены в Менеджере Отчетов.${NC}"
     pause
 }
 
@@ -570,15 +692,13 @@ manage_input_file() {
         echo -e "${MAGENTA}=== УПРАВЛЕНИЕ СПИСКОМ ЦЕЛЕЙ (in.txt) ===${NC}"
         if [[ ! -f "$INPUT_FILE" ]]; then touch "$INPUT_FILE"; fi
         echo -e " ${YELLOW}1.${NC} 📝 Редактировать список (nano)"
-        echo -e " ${YELLOW}2.${NC} 🔍 Запустить массовый скан (Поиск SNI)"
+        echo -e " ${YELLOW}2.${NC} 🔍 Запустить массовый скан подсетей (Поиск SNI соседей)"
         echo -e " ${YELLOW}3.${NC} 🕵️  Запустить массовый ПРОБИВ (OSINT + Рентген)"
         echo -e " ${CYAN}0.${NC} ↩️  Назад"
         read -p ">> " in_choice
         case $in_choice in
             1) nano "$INPUT_FILE" ;;
-            2) 
-                if [[ ! -s "$INPUT_FILE" ]]; then echo -e "${RED}Файл пуст!${NC}"; sleep 2
-                else run_scanner "in" "$INPUT_FILE" "📂 РЕЖИМ: СКАН ПО СПИСКУ ЦЕЛЕЙ (IN.TXT)" "Проверяет все IP и домены из файла $INPUT_FILE."; fi ;;
+            2) run_mass_subnet_scan ;;
             3) run_mass_recon ;;
             0) return ;;
         esac
@@ -625,7 +745,7 @@ menu_scanner() {
             3)
                 echo -e "\n${CYAN}[*] Ваш IP-адрес: ${YELLOW}$my_ip${NC}"
                 read -p ">> Введите стартовый IP [Enter = $my_ip]: " s_ip
-                run_scanner "addr" "${s_ip:-$my_ip}" "♾️ РЕЖИМ: БЕСКОНЕЧНЫЙ ПОИСК (INFINITY MODE)" "Скрипт берет стартовый IP и бесконечно проверяет соседние адреса (+1/-1),\nпока вы его не остановите (нажав Ctrl+C) или пока он не найдет нужное количество SNI." ;;
+                run_scanner "addr" "${s_ip:-$my_ip}" "♾️ РЕЖИМ: БЕСКОНЕЧНЫЙ ПОИСК (INFINITY Mode)" "Скрипт берет стартовый IP и бесконечно проверяет соседние адреса (+1/-1),\nпока вы его не остановите (нажав Ctrl+C) или пока он не найдет нужное количество SNI." ;;
             4) manage_input_file ;;
             5)
                 echo -e "\n${GRAY}Пример: https://launchpad.net/ubuntu/+archivemirrors${NC}"
