@@ -64,7 +64,7 @@ run_single_scan() {
     read -p ">> Введите цель (IP или Домен): " target
     [[ -z "$target" ]] && return
 
-    # Хак: отключаем бесконечность для IPv4
+    # Хак для Рентгена: отключаем бесконечность для IPv4
     if [[ "$target" =~ ^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$ ]]; then 
         local safe_target=$target
         target="${target}/32"
@@ -258,7 +258,8 @@ run_scanner() {
         [[ -z "$target" ]] && return
     fi
 
-    if [[ "$mode" == "addr" && "$target" =~ ^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$ ]]; then target="${target}/32"; fi
+    # БОЛЬШЕ НЕТ ХАКА С /32! 
+    # В этом режиме сканер получает чистую цель, чтобы Бесконечный поиск (Mode 3) работал корректно!
 
     local safe_target=$(echo "$target" | sed 's/[^a-zA-Z0-9]/_/g' | cut -c 1-15)
     local out_file="scan_${mode}_${safe_target}_$(date +%s).csv"
@@ -493,7 +494,16 @@ menu_scanner() {
             2) 
                 echo -e "\n${CYAN}[*] Ваша подсеть: ${YELLOW}$my_subnet${NC}"
                 read -p ">> Введите подсеть (CIDR) [Enter = $my_subnet]: " sub
-                run_scanner "addr" "${sub:-$my_subnet}" "🌐 РЕЖИМ: МАССОВЫЙ СКАН ПОДСЕТИ (CIDR)" "Проверяет пул адресов. Поиск SNI-кандидатов среди 'соседей'." ;;
+                sub=${sub:-$my_subnet}
+                
+                # Защита от дурака: если ввели чистый IP, переводим в /24
+                if [[ "$sub" =~ ^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+                    sub=$(echo "$sub" | awk -F. '{print $1"."$2"."$3".0/24"}')
+                    echo -e "${YELLOW}[!] Вы ввели IP вместо подсети. Исправлено на: $sub${NC}"
+                    sleep 1
+                fi
+                
+                run_scanner "addr" "$sub" "🌐 РЕЖИМ: МАССОВЫЙ СКАН ПОДСЕТИ (CIDR)" "Проверяет пул адресов. Поиск SNI-кандидатов среди 'соседей'." ;;
             3)
                 echo -e "\n${CYAN}[*] Ваш IP-адрес: ${YELLOW}$my_ip${NC}"
                 read -p ">> Введите стартовый IP [Enter = $my_ip]: " s_ip
