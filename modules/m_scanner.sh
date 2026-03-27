@@ -168,8 +168,12 @@ run_single_scan() {
 
     echo -e "\n${BLUE}======================================================${NC}"
     read -p ">> Сохранить это досье в Менеджере Отчетов? (Y/n): " keep_recon
-    if [[ "$keep_recon" != "n" && "$keep_recon" != "N" ]]; then
-        local safe_name=$(echo "$safe_target" | sed 's/[^a-zA-Z0-9]/_/g')
+    
+    # Регулярка для защиты от раскладки. ^[nNтТ] срабатывает, если введено N, n, Т или т (даже с пробелами)
+    if [[ "$keep_recon" =~ ^[nNтТ] ]]; then
+        echo -e "${YELLOW}Досье не сохранено.${NC}"
+    else
+        local safe_name=$(echo "$safe_target" | sed 's/[^a-zA-Z0-9А-Яа-яЁё]/_/g')
         local recon_file="$RECON_DIR/recon_${safe_name}_$(date +%s).txt"
         echo "$REPORT_OUTPUT" > "$recon_file"
         echo -e "${GREEN}Досье успешно сохранено! (Менеджер Отчетов -> 2)${NC}"
@@ -289,7 +293,9 @@ run_mass_recon() {
 
     echo -e "\n${BLUE}======================================================${NC}"
     read -p ">> Сохранить этот массовый отчет OSINT? (Y/n): " keep_recon
-    if [[ "$keep_recon" != "n" && "$keep_recon" != "N" ]]; then
+    if [[ "$keep_recon" =~ ^[nNтТ] ]]; then
+        echo -e "${YELLOW}Массовое досье не сохранено.${NC}"
+    else
         local recon_file="$RECON_DIR/mass_recon_$(date +%s).txt"
         echo "$FULL_REPORT" > "$recon_file"
         echo -e "${GREEN}Мега-досье успешно сохранено! (Менеджер Отчетов -> 2)${NC}"
@@ -297,7 +303,7 @@ run_mass_recon() {
     pause
 }
 
-# --- 3. УМНЫЙ АНАЛИЗАТОР (АВТОМАТИЧЕСКИЙ ВЫВОД ДЛЯ МАССОВЫХ СКАНОВ ПО СПИСКУ) ---
+# --- 3. УМНЫЙ АНАЛИЗАТОР (АВТОМАТИЧЕСКИЙ И РУЧНОЙ) ---
 analyze_results_auto() {
     local file=$1
     local total_lines=$(wc -l < "$file" 2>/dev/null)
@@ -350,7 +356,8 @@ analyze_results() {
     
     local target_geo=""
     if [[ -z "$user_geo" ]]; then target_geo="$my_geo"
-    elif [[ "$user_geo" != "n" && "$user_geo" != "N" ]]; then target_geo=$(echo "$user_geo" | tr '[:lower:]' '[:upper:]')
+    elif [[ "$user_geo" =~ ^[nNтТ] ]]; then target_geo=""
+    else target_geo=$(echo "$user_geo" | tr '[:lower:]' '[:upper:]')
     fi
 
     echo -e "\n${CYAN}Анализ и сортировка файла: $(basename "$file")...${NC}"
@@ -435,7 +442,7 @@ run_scanner() {
     echo -e "${GRAY}Добавьте понятную метку (напр. Hetzner), чтобы потом легко найти этот отчет.${NC}"
     read -p ">> Метка для файла [Enter = пропустить]: " s_tag
     
-    local safe_tag=$(echo "$s_tag" | sed 's/[^a-zA-Z0-9]/_/g')
+    local safe_tag=$(echo "$s_tag" | sed 's/[^a-zA-Z0-9А-Яа-яЁё]/_/g')
     if [[ -n "$safe_tag" ]]; then out_file="scan_${safe_tag}_${safe_target}_$(date +%s).csv"; fi
 
     echo -e "\n${GREEN}[*] ЗАПУСК СКАНИРОВАНИЯ...${NC}"
@@ -492,7 +499,7 @@ run_scanner() {
 
     echo -e "\n${BLUE}======================================================${NC}"
     read -p ">> Сохранить этот отчет в Менеджере Отчетов? (Y/n): " keep_report
-    if [[ "$keep_report" == "n" || "$keep_report" == "N" ]]; then
+    if [[ "$keep_report" =~ ^[nNтТ] ]]; then
         rm -f "$SCANNER_DIR/$out_file" 2>/dev/null
         echo -e "${YELLOW}Отчет удален.${NC}"
     else
@@ -530,7 +537,6 @@ run_mass_subnet_scan() {
         [[ -z "$raw_target" ]] && continue
         
         local target=$raw_target
-        # Превращаем голый IP в подсеть /24 для поиска соседей
         if [[ "$target" =~ ^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
             target=$(echo "$target" | awk -F. '{print $1"."$2"."$3".0/24"}')
         fi
@@ -582,7 +588,6 @@ run_mass_subnet_scan() {
             fi
         done
 
-        # Выводим ТОП-5 для этой подсети без паузы
         analyze_results_auto "$SCANNER_DIR/$out_file"
         echo -e "\n${GRAY}Файл сохранен: $out_file${NC}\n"
 
@@ -616,13 +621,13 @@ manage_csv_reports() {
         read -p ">> " r_choice
         
         [[ "$r_choice" == "0" ]] && return
-        if [[ "$r_choice" == "D" || "$r_choice" == "d" ]]; then
+        if [[ "$r_choice" =~ ^[dDвВ]$ ]]; then
             read -p "Удалить ВСЕ CSV отчеты? (y/N): " confirm_del
-            [[ "$confirm_del" == "y" || "$confirm_del" == "Y" ]] && rm -f "$SCANNER_DIR"/*.csv 2>/dev/null && echo -e "${GREEN}Очищено!${NC}" && sleep 1
-        elif [[ "$r_choice" =~ ^d([0-9]+)$ ]]; then
+            [[ "$confirm_del" =~ ^[yYнН] ]] && rm -f "$SCANNER_DIR"/*.csv 2>/dev/null && echo -e "${GREEN}Очищено!${NC}" && sleep 1
+        elif [[ "$r_choice" =~ ^[dDвВ]([0-9]+)$ ]]; then
             local idx=$((${BASH_REMATCH[1]}-1))
             [[ -n "${CSV_FILES[$idx]}" ]] && rm -f "${CSV_FILES[$idx]}" && echo -e "${GREEN}Удалено!${NC}" && sleep 1
-        elif [[ "$r_choice" =~ ^a([0-9]+)$ ]]; then
+        elif [[ "$r_choice" =~ ^[aAфФ]([0-9]+)$ ]]; then
             local idx=$((${BASH_REMATCH[1]}-1))
             [[ -n "${CSV_FILES[$idx]}" ]] && analyze_results "${CSV_FILES[$idx]}" && pause
         elif [[ "$r_choice" =~ ^[0-9]+$ ]]; then
@@ -652,10 +657,10 @@ manage_recon_reports() {
         read -p ">> " r_choice
         
         [[ "$r_choice" == "0" ]] && return
-        if [[ "$r_choice" == "D" || "$r_choice" == "d" ]]; then
+        if [[ "$r_choice" =~ ^[dDвВ]$ ]]; then
             read -p "Удалить ВСЕ досье? (y/N): " confirm_del
-            [[ "$confirm_del" == "y" || "$confirm_del" == "Y" ]] && rm -f "$RECON_DIR"/*.txt 2>/dev/null && echo -e "${GREEN}Очищено!${NC}" && sleep 1
-        elif [[ "$r_choice" =~ ^d([0-9]+)$ ]]; then
+            [[ "$confirm_del" =~ ^[yYнН] ]] && rm -f "$RECON_DIR"/*.txt 2>/dev/null && echo -e "${GREEN}Очищено!${NC}" && sleep 1
+        elif [[ "$r_choice" =~ ^[dDвВ]([0-9]+)$ ]]; then
             local idx=$((${BASH_REMATCH[1]}-1))
             [[ -n "${TXT_FILES[$idx]}" ]] && rm -f "${TXT_FILES[$idx]}" && echo -e "${GREEN}Удалено!${NC}" && sleep 1
         elif [[ "$r_choice" =~ ^[0-9]+$ ]]; then
@@ -745,7 +750,7 @@ menu_scanner() {
             3)
                 echo -e "\n${CYAN}[*] Ваш IP-адрес: ${YELLOW}$my_ip${NC}"
                 read -p ">> Введите стартовый IP [Enter = $my_ip]: " s_ip
-                run_scanner "addr" "${s_ip:-$my_ip}" "♾️ РЕЖИМ: БЕСКОНЕЧНЫЙ ПОИСК (INFINITY Mode)" "Скрипт берет стартовый IP и бесконечно проверяет соседние адреса (+1/-1),\nпока вы его не остановите (нажав Ctrl+C) или пока он не найдет нужное количество SNI." ;;
+                run_scanner "addr" "${s_ip:-$my_ip}" "♾️ РЕЖИМ: БЕСКОНЕЧНЫЙ ПОИСК (INFINITY MODE)" "Скрипт берет стартовый IP и бесконечно проверяет соседние адреса (+1/-1),\nпока вы его не остановите (нажав Ctrl+C) или пока он не найдет нужное количество SNI." ;;
             4) manage_input_file ;;
             5)
                 echo -e "\n${GRAY}Пример: https://launchpad.net/ubuntu/+archivemirrors${NC}"
