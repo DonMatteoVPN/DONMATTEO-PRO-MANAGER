@@ -55,25 +55,35 @@ show_prereq_instructions() {
     pause
 }
 
+# --- ДОБАВЛЕННАЯ ФУНКЦИЯ (Которой не хватало) ---
+install_sysctl() {
+    echo -e "\n${CYAN}[*] Настройка параметров ядра (Sysctl)...${NC}"
+    cat << 'EOF' > /etc/sysctl.d/99-anti-ddos.conf
+net.ipv4.tcp_syncookies = 1
+net.ipv4.tcp_max_syn_backlog = 8192
+net.core.somaxconn = 65535
+net.ipv4.tcp_fin_timeout = 15
+net.ipv4.tcp_synack_retries = 2
+net.ipv4.conf.all.rp_filter = 1
+net.ipv4.conf.default.rp_filter = 1
+net.ipv4.icmp_echo_ignore_broadcasts = 1
+EOF
+    sysctl --system >/dev/null 2>&1
+    echo -e "${GREEN}[+] Защита ядра активирована.${NC}"
+}
+
 install_ufw() {
     echo -e "\n${CYAN}[*] Первичная настройка UFW (Сброс до заводских настроек)...${NC}"
     apt-get install ufw -y >/dev/null 2>&1
     
-    # --- ШАГ 1: ПОИСК ТЕКУЩЕГО SSH ПОРТА ---
-    # Ищем все строки Port в конфиге, берем первую цифру. Если пусто - ставим 22.
     local CURRENT_SSH=$(grep -i "^Port " /etc/ssh/sshd_config | awk '{print $2}' | head -n 1)
     [[ -z "$CURRENT_SSH" ]] && CURRENT_SSH="22"
     echo -e "${GRAY}Обнаружен активный SSH порт: ${YELLOW}$CURRENT_SSH${NC}"
 
-    # --- ШАГ 2: СБРОС ПРАВИЛ ---
     ufw --force reset >/dev/null 2>&1
     cp /etc/ufw/before.rules /etc/ufw/before.rules.bak
-    
-    # Очищаем старые записи нашего скрипта
     sed -i '/# --- НАЧАЛО: Правила защиты от DDoS/,/# --- КОНЕЦ: Направляем трафик/d' /etc/ufw/before.rules
 
-    # --- ШАГ 3: ИНЪЕКЦИЯ ПРАВИЛ (С дефолтными лимитами 80/150) ---
-    # Мы подставляем $CURRENT_SSH в правила лимитов скорости
     sed -i '/\*filter/a \
 # --- НАЧАЛО: Правила защиты от DDoS (DonMatteo) ---\n\
 :IN_LIMIT - [0:0]\n\
@@ -90,23 +100,20 @@ install_ufw() {
 \n\
 # --- НАЧАЛО: Лимит одновременных соединений (Дефолт 150) ---\n\
 -A ufw-before-input -p tcp --dport 443 -m connlimit --connlimit-above 150 --connlimit-mask 32 -j DROP\n\
--A ufw-before-input -p tcp --dport 8443 -m connlimit --connlimit-above 150 --connlimit-mask 32 -j DROP\n\
+-A ufw-before-input -p tcp --dport 6443 -m connlimit --connlimit-above 150 --connlimit-mask 32 -j DROP\n\
 # --- КОНЕЦ: Лимит одновременных соединений ---\n\
 \n\
 # --- НАЧАЛО: Направляем трафик на проверку скорости (Дефолт 80/s) ---\n\
 -A ufw-before-input -p tcp --dport '"$CURRENT_SSH"' -m conntrack --ctstate NEW -j IN_LIMIT\n\
 -A ufw-before-input -p tcp --dport 443 -m conntrack --ctstate NEW -j IN_LIMIT\n\
--A ufw-before-input -p tcp --dport 8443 -m conntrack --ctstate NEW -j IN_LIMIT\n\
+-A ufw-before-input -p tcp --dport 6443 -m conntrack --ctstate NEW -j IN_LIMIT\n\
 -A ufw-before-input -p tcp --dport 2222 -m conntrack --ctstate NEW -j IN_LIMIT\n\
 # --- КОНЕЦ: Направляем трафик на проверку скорости ---' /etc/ufw/before.rules
 
-    # --- ШАГ 4: ЗАПУСК И ПОРТЫ ---
     ufw default deny incoming >/dev/null 2>&1
     ufw allow "$CURRENT_SSH"/tcp comment 'Secure SSH' >/dev/null 2>&1
     ufw allow 443/tcp comment 'VLESS Reality/XHTTP' >/dev/null 2>&1
     ufw allow 6443/tcp comment 'VLESS Reality/XHTTP' >/dev/null 2>&1
-    
-    # Если панель на другом порту, открываем и его
     ufw allow 2222/tcp comment 'Remna Panel' >/dev/null 2>&1
     
     ufw --force enable >/dev/null 2>&1
@@ -117,7 +124,13 @@ install_ufw() {
 install_all() {
     install_sysctl
     install_ufw
-    install_fail2ban 
+    # Вызываем функцию из модуля m_f2b.sh
+    if declare -f install_fail2ban > /dev/null; then
+        install_fail2ban
+    else
+        echo -e "${RED}[!] Ошибка: Модуль m_f2b.sh не загружен.${NC}"
+        pause
+    fi
 }
 
 install_menu() {
@@ -140,9 +153,9 @@ install_menu() {
         read -p ">> " choice
         case $choice in
             1) install_all ;; 
-            2) install_sysctl ;; 
+            2) install_sysctl; pause ;; 
             3) install_ufw ;; 
-            4) install_fail2ban ;; # <-- Исправлено здесь
+            4) install_fail2ban ;; 
             5) show_prereq_instructions ;; 
             0) return ;;
             *) echo -e "${RED}Ошибка: Неверный выбор.${NC}"; sleep 1 ;;
