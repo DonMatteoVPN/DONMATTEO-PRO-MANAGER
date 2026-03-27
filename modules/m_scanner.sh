@@ -5,7 +5,7 @@ SCANNER_DIR="/opt/RealiTLScanner"
 SCANNER_BIN="$SCANNER_DIR/RealiTLScanner"
 GEO_DB="$SCANNER_DIR/Country.mmdb"
 INPUT_FILE="$SCANNER_DIR/in.txt"
-RECON_DIR="$SCANNER_DIR/recon" # Новая папка для досье
+RECON_DIR="$SCANNER_DIR/recon"
 
 # --- 1. УСТАНОВКА И СБОРКА ---
 check_scanner_install() {
@@ -78,13 +78,10 @@ run_single_scan() {
 
     echo -e "\n${GREEN}[*] Сбор данных...${NC}"
     
-    # Переменная для хранения всего отчета, чтобы потом его сохранить
     local REPORT_OUTPUT=""
     local nl=$'\n'
 
-    # Пробив провайдера (OSINT)
     local ip_to_check=$safe_target
-    # Если ввели домен, пытаемся резолвить его в IP
     if [[ ! "$ip_to_check" =~ ^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
         ip_to_check=$(getent hosts "$safe_target" | awk '{ print $1 }' | head -n 1)
     fi
@@ -103,7 +100,6 @@ run_single_scan() {
         REPORT_OUTPUT+="   └─ Город:           ${city_info:-Неизвестно} (${country_info:-N/A})${nl}"
         
         if [[ -n "$org_info" ]]; then
-            # Генерируем ссылку на Google для поиска хостинга
             local search_query=$(echo "buy vps $org_info" | sed 's/ /+/g')
             REPORT_OUTPUT+="   └─ Поиск хостинга:  https://www.google.com/search?q=${search_query}${nl}"
         fi
@@ -116,7 +112,6 @@ run_single_scan() {
     for current_port in "${PORT_ARRAY[@]}"; do
         REPORT_OUTPUT+=" >>> СКАНИРОВАНИЕ ПОРТА: ${current_port} <<<${nl}"
         
-        # Запускаем сканер и собираем лог
         local scan_log=$(./RealiTLScanner -addr "$target" -port "$current_port" -timeout 5 -v 2>&1)
         
         local found_info=false
@@ -125,7 +120,6 @@ run_single_scan() {
                 found_info=true
                 local feas=$(echo "$line" | grep -oP 'feasible=\K[^ ]+')
                 local ip=$(echo "$line" | grep -oP 'ip=\K[^ ]+')
-                # Умный Regex, который идеально работает с кавычками и без них
                 local tls=$(echo "$line" | grep -oP 'tls=\K([^ ]+|"[^"]+")' | tr -d '"')
                 local alpn=$(echo "$line" | grep -oP 'alpn=\K([^ ]+|"[^"]+")' | tr -d '"')
                 local dom=$(echo "$line" | grep -oP 'cert-domain=\K([^ ]+|"[^"]+")' | tr -d '"')
@@ -164,9 +158,7 @@ run_single_scan() {
         fi
     done
     
-    # Выводим отчет на экран
     clear
-    # Красим ключевые слова для красивого вывода
     echo "$REPORT_OUTPUT" | sed -e "s/ПОДХОДИТ ДЛЯ REALITY/$(printf '\033[1;32m')&$(printf '\033[0m')/" \
                                 -e "s/НЕ ПОДХОДИТ.*/$(printf '\033[1;31m')&$(printf '\033[0m')/" \
                                 -e "s/ОШИБКА.*/$(printf '\033[1;31m')&$(printf '\033[0m')/" \
@@ -276,7 +268,7 @@ run_scanner() {
 
     read -p ">> Порт(ы) через запятую (Enter = 443): " s_port; s_port=${s_port:-443}
     IFS=',' read -ra PORT_ARRAY <<< "${s_port// /}"
-    read -p ">> Потоков (Enter = 10): " s_thread; s_thread=${s_thread:-10}
+    read -p ">> Потоков (Enter = 10, макс 50): " s_thread; s_thread=${s_thread:-10}
     read -p ">> Таймаут в сек (Enter = 5): " s_timeout; s_timeout=${s_timeout:-5}
     read -p ">> Сколько успешных SNI найти? (Enter = 0, бесконечно): " s_limit; s_limit=${s_limit:-0}
     read -p ">> Добавить метку к имени файла (напр. Hetzner) [Enter = пропустить]: " s_tag
@@ -441,10 +433,11 @@ manage_reports_menu() {
         echo -e " ${CYAN}0.${NC} ↩️ Назад"
         
         read -p ">> " rm_choice
-        case $r_choice in
+        case $rm_choice in
             1) manage_csv_reports ;;
             2) manage_recon_reports ;;
             0) return ;;
+            *) echo -e "${RED}Неверный ввод.${NC}"; sleep 1 ;;
         esac
     done
 }
