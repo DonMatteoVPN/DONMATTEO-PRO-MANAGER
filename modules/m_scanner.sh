@@ -99,7 +99,6 @@ run_single_scan() {
         REPORT_OUTPUT+="   └─ Провайдер (ASN): ${org_info:-Неизвестно}${nl}"
         REPORT_OUTPUT+="   └─ Город:           ${city_info:-Неизвестно} (${country_info:-N/A})${nl}"
         
-        # OSINT: Вычисляем сайт хостинга через Hostname (PTR)
         if [[ -n "$host_name" && "$host_name" != "null" ]]; then
             local base_domain=$(echo "$host_name" | awk -F. '{if (NF>1) print $(NF-1)"."$NF; else print $0}')
             REPORT_OUTPUT+="   └─ Сайт хостинга:   https://${base_domain} (из PTR: $host_name)${nl}"
@@ -354,15 +353,18 @@ analyze_results() {
     fi
 }
 
-# --- 4. МАССОВЫЙ СКАНЕР (ДЛЯ ПУНКТОВ 2-5) ---
+# --- 4. МАССОВЫЙ СКАНЕР (ДЛЯ ПУНКТОВ 2-5) С ПОЯСНЕНИЯМИ ---
 run_scanner() {
-    local mode=$1; local target=$2; local title=$3; local description=$4
+    local mode=$1
+    local target=$2
+    local title=$3
+    local description=$4
 
     clear
     echo -e "${MAGENTA}======================================================${NC}"
     echo -e "${BOLD} $title${NC}"
     echo -e "${MAGENTA}======================================================${NC}"
-    echo -e "${CYAN}Для чего это нужно?${NC}"
+    echo -e "${CYAN}💡 Для чего это нужно?${NC}"
     echo -e "${GRAY}$description${NC}\n"
 
     if [[ -z "$target" ]]; then
@@ -375,22 +377,46 @@ run_scanner() {
     local safe_target=$(echo "$target" | sed 's/[^a-zA-Z0-9]/_/g' | cut -c 1-15)
     local out_file="scan_${mode}_${safe_target}_$(date +%s).csv"
 
-    echo -e "${BLUE}--- Настройка параметров сканирования ---${NC}"
+    echo -e "${BLUE}--- ⚙️ ТОНКАЯ НАСТРОЙКА СКАНИРОВАНИЯ ---${NC}"
     echo -e "${CYAN}Цель:${NC} $target (Режим: -$mode)\n"
 
-    read -p ">> Порт(ы) через запятую (Enter = 443): " s_port; s_port=${s_port:-443}
+    echo -e "${YELLOW}1. Целевые порты (-port)${NC}"
+    echo -e "${GRAY}Обычно маскировка Reality работает на HTTPS порту 443.${NC}"
+    echo -e "${GRAY}Но можно указать несколько (напр: 443, 8443). Скрипт проверит их по очереди.${NC}"
+    read -p ">> Порт(ы) через запятую (Enter = 443): " s_port
+    s_port=${s_port:-443}
     IFS=',' read -ra PORT_ARRAY <<< "${s_port// /}"
-    read -p ">> Потоков (Enter = 10, макс 50): " s_thread; s_thread=${s_thread:-10}
-    read -p ">> Таймаут в сек (Enter = 5): " s_timeout; s_timeout=${s_timeout:-5}
-    read -p ">> Сколько успешных SNI найти? (Enter = 0, бесконечно): " s_limit; s_limit=${s_limit:-0}
-    read -p ">> Добавить метку к имени файла (напр. Hetzner) [Enter = пропустить]: " s_tag
+
+    echo -e "\n${YELLOW}2. Количество потоков (-thread)${NC}"
+    echo -e "${GRAY}Сколько IP проверять одновременно. Больше = быстрее, но может нагрузить сервер.${NC}"
+    read -p ">> Потоков (Enter = 10, макс 50): " s_thread
+    s_thread=${s_thread:-10}
+
+    echo -e "\n${YELLOW}3. Таймаут ответа (-timeout)${NC}"
+    echo -e "${GRAY}Сколько секунд ждать ответа от сервера. 5 секунд оптимально для хороших сетей.${NC}"
+    read -p ">> Таймаут в сек (Enter = 5): " s_timeout
+    s_timeout=${s_timeout:-5}
+    
+    echo -e "\n${YELLOW}4. Лимит поиска (Стоп-кран)${NC}"
+    echo -e "${GRAY}Скрипт остановится автоматически, когда найдет нужное количество рабочих SNI.${NC}"
+    read -p ">> Сколько успешных SNI найти? (Enter = 0, искать до конца списка): " s_limit
+    s_limit=${s_limit:-0}
+
+    echo -e "\n${YELLOW}5. Имя файла (Тег)${NC}"
+    echo -e "${GRAY}Добавьте понятную метку (напр. Hetzner), чтобы потом легко найти этот отчет.${NC}"
+    read -p ">> Метка для файла [Enter = пропустить]: " s_tag
     
     local safe_tag=$(echo "$s_tag" | sed 's/[^a-zA-Z0-9]/_/g')
     if [[ -n "$safe_tag" ]]; then out_file="scan_${safe_tag}_${safe_target}_$(date +%s).csv"; fi
 
-    echo -e "\n${GREEN}[*] Запуск сканирования...${NC}"
+    echo -e "\n${GREEN}[*] ЗАПУСК СКАНИРОВАНИЯ...${NC}"
+    echo -e "${RED}⚠️ ВАЖНО: Вы можете прервать процесс, нажав [Ctrl+C] в любой момент!${NC}"
+    echo -e "${GRAY}Скрипт НЕ закроется. Он просто досрочно остановит текущий поиск,${NC}"
+    echo -e "${GRAY}сохранит всё, что успел найти, и плавно перейдет к Умному Анализу.${NC}\n"
+    
     cd "$SCANNER_DIR" || return
     export PATH=/usr/local/go/bin:$PATH
+    
     echo "IP,ORIGIN,CERT_DOMAIN,CERT_ISSUER,GEO_CODE,PORT" > "$SCANNER_DIR/$out_file"
 
     for current_port in "${PORT_ARRAY[@]}"; do
@@ -399,26 +425,33 @@ run_scanner() {
         
         ./RealiTLScanner -"$mode" "$target" -port "$current_port" -thread "$s_thread" -timeout "$s_timeout" -out "$tmp_csv" >/dev/null 2>&1 &
         local SCAN_PID=$!
-        trap 'kill $SCAN_PID 2>/dev/null; echo -e "\n\n${YELLOW}Остановлено пользователем.${NC}"; break' INT
+        
+        # Безопасный перехват Ctrl+C
+        trap 'kill $SCAN_PID 2>/dev/null; echo -e "\n\n${YELLOW}🛑 Сканирование прервано пользователем. Переход к анализу...${NC}"; break' INT
 
         while kill -0 $SCAN_PID 2>/dev/null; do
             if [[ -f "$tmp_csv" ]]; then
                 local current_count=$(cat "$tmp_csv" 2>/dev/null | wc -l)
                 local actual_count=$((current_count > 0 ? current_count - 1 : 0))
                 local last_sni=$(tail -n 1 "$tmp_csv" 2>/dev/null | awk -F, '{print $3}')
+                
                 if [[ -n "$last_sni" && "$last_sni" != "CERT_DOMAIN" ]]; then
                     echo -ne "\r\033[K${CYAN}⏳ Сканирование... Найдено SNI: ${GREEN}${actual_count}${NC} | Последний: ${YELLOW}${last_sni}${NC}"
                 else
                     echo -ne "\r\033[K${CYAN}⏳ Сканирование... Найдено SNI: ${GREEN}${actual_count}${NC}"
                 fi
+                
                 if [[ "$s_limit" -gt 0 && "$actual_count" -ge "$s_limit" ]]; then
-                    echo -e "\n\n${GREEN}[+] Лимит ($s_limit) достигнут!${NC}"
+                    echo -e "\n\n${GREEN}[+] Лимит ($s_limit) достигнут! Останавливаем сканер...${NC}"
                     kill $SCAN_PID 2>/dev/null; break
                 fi
-            else echo -ne "\r\033[K${CYAN}⏳ Запуск потоков...${NC}"; fi
+            else
+                echo -ne "\r\033[K${CYAN}⏳ Запуск потоков и ожидание первых результатов...${NC}"
+            fi
             sleep 1
         done
-        echo -e ""; trap - INT
+        echo -e ""
+        trap - INT # Отключаем перехват после завершения
 
         if [[ -f "$tmp_csv" ]]; then
             tail -n +2 "$tmp_csv" | awk -v p="$current_port" -F',' '{print $0","p}' >> "$SCANNER_DIR/$out_file"
@@ -431,8 +464,12 @@ run_scanner() {
 
     echo -e "\n${BLUE}======================================================${NC}"
     read -p ">> Сохранить этот отчет в Менеджере Отчетов? (Y/n): " keep_report
-    if [[ "$keep_report" == "n" || "$keep_report" == "N" ]]; then rm -f "$SCANNER_DIR/$out_file" 2>/dev/null; echo -e "${YELLOW}Отчет удален.${NC}"
-    else echo -e "${GREEN}Отчет успешно сохранен!${NC} (Имя: $out_file)"; fi
+    if [[ "$keep_report" == "n" || "$keep_report" == "N" ]]; then
+        rm -f "$SCANNER_DIR/$out_file" 2>/dev/null
+        echo -e "${YELLOW}Отчет удален.${NC}"
+    else
+        echo -e "${GREEN}Отчет успешно сохранен!${NC} (Имя: $out_file)"
+    fi
     pause
 }
 
@@ -584,16 +621,16 @@ menu_scanner() {
                     sub=$(echo "$sub" | awk -F. '{print $1"."$2"."$3".0/24"}')
                     echo -e "${YELLOW}[!] Вы ввели IP вместо подсети. Исправлено на: $sub${NC}"; sleep 1
                 fi
-                run_scanner "addr" "$sub" "🌐 РЕЖИМ: МАССОВЫЙ СКАН ПОДСЕТИ (CIDR)" "Поиск SNI-кандидатов среди 'соседей'." ;;
+                run_scanner "addr" "$sub" "🌐 РЕЖИМ: МАССОВЫЙ СКАН ПОДСЕТИ (CIDR)" "Этот режим проверяет целый пул адресов (например, 256 штук в подсети /24).\nОбычно используется для поиска идеальных SNI-кандидатов среди 'соседей' вашего VPN сервера.\nЧем ближе сервер маскировки к вам физически, тем сложнее цензорам вас заблокировать!" ;;
             3)
                 echo -e "\n${CYAN}[*] Ваш IP-адрес: ${YELLOW}$my_ip${NC}"
                 read -p ">> Введите стартовый IP [Enter = $my_ip]: " s_ip
-                run_scanner "addr" "${s_ip:-$my_ip}" "♾️ РЕЖИМ: БЕСКОНЕЧНЫЙ ПОИСК (INFINITY MODE)" "Бесконечно проверяет адреса от стартового IP." ;;
+                run_scanner "addr" "${s_ip:-$my_ip}" "♾️ РЕЖИМ: БЕСКОНЕЧНЫЙ ПОИСК (INFINITY MODE)" "Скрипт берет стартовый IP и бесконечно проверяет соседние адреса (+1/-1),\nпока вы его не остановите (нажав Ctrl+C) или пока он не найдет нужное количество SNI." ;;
             4) manage_input_file ;;
             5)
                 echo -e "\n${GRAY}Пример: https://launchpad.net/ubuntu/+archivemirrors${NC}"
                 read -p ">> URL со списком: " s_url
-                [[ -n "$s_url" ]] && run_scanner "url" "$s_url" "🕸️ РЕЖИМ: ВЕБ-КРАУЛЕР (СБОР ПО URL)" "Вытаскивает доменные имена со страницы и сканирует их." ;;
+                [[ -n "$s_url" ]] && run_scanner "url" "$s_url" "🕸️ РЕЖИМ: ВЕБ-КРАУЛЕР (СБОР ПО URL)" "Скрипт зайдет на указанную страницу, найдет там все доменные имена\n(например, список зеркал) и просканирует их на пригодность для Reality." ;;
             8) manage_reports_menu ;;
             0) return ;;
         esac
