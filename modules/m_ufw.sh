@@ -200,7 +200,7 @@ ufw_logs_menu() {
         read -p ">> " ch
         case $ch in
             1) ufw logging on; echo -e "${GREEN}Логи включены (low)${NC}"; sleep 1 ;;
-            2) ufw logging high; echo -e "${ORANGE}Логи включены (high)${NC}"; sleep 1 ;;
+            2) ufw logging high; echo -e "${YELLOW}Логи включены (high)${NC}"; sleep 1 ;;
             3) ufw logging off; echo -e "${RED}Логи выключены${NC}"; sleep 1 ;;
             4) view_ufw_logs_live ;;
             5) show_top_attackers ;;
