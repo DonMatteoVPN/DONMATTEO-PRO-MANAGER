@@ -15,140 +15,204 @@ check_scanner_install() {
         apt-get update >/dev/null 2>&1
         apt-get install git wget curl -y >/dev/null 2>&1
         
-        # Устанавливаем актуальный Go (1.22+), так как Debian 12 дает старый 1.19
-        echo -e "${CYAN}[*] Загрузка и установка актуального Go (1.22+)...${NC}"
+        echo -e "${CYAN}[*] Загрузка актуального Go (1.22+)...${NC}"
         wget -q https://go.dev/dl/go1.22.1.linux-amd64.tar.gz -O /tmp/go.tar.gz
         rm -rf /usr/local/go
         tar -C /usr/local -xzf /tmp/go.tar.gz
         rm /tmp/go.tar.gz
         export PATH=/usr/local/go/bin:$PATH
 
-        # Очистка старой папки и клонирование
         rm -rf "$SCANNER_DIR"
         git clone https://github.com/xtls/RealiTLScanner "$SCANNER_DIR"
         
         cd "$SCANNER_DIR" || return
-        echo -e "${CYAN}[*] Компиляция Go-бинарника (это может занять минуту)...${NC}"
+        echo -e "${CYAN}[*] Компиляция Go-бинарника...${NC}"
         go build -o RealiTLScanner
         
         if [[ -f "$SCANNER_BIN" ]]; then
             chmod +x "$SCANNER_BIN"
-            echo -e "${GREEN}[+] Сканер успешно собран: $SCANNER_BIN${NC}"
         else
             echo -e "${RED}[!] ОШИБКА: Не удалось собрать бинарник.${NC}"
             pause; return 1
         fi
     fi
 
-    # Авто-загрузка GeoIP (Country.mmdb должен быть рядом с бинарником)
+    # Авто-загрузка GeoIP
     if [[ ! -f "$GEO_DB" ]]; then
         echo -e "${YELLOW}[*] Загрузка базы GeoIP (Country.mmdb)...${NC}"
         curl -L -o "$GEO_DB" "https://github.com/Loyalsoldier/geoip/releases/latest/download/Country.mmdb" >/dev/null 2>&1
     fi
 }
 
-# --- 2. УМНЫЙ АНАЛИЗАТОР ---
+# --- 2. УМНЫЙ АНАЛИЗАТОР (С АВТО-ОПРЕДЕЛЕНИЕМ ГЕО) ---
 analyze_results() {
     local file=$1
-    [[ ! -f "$file" ]] && { echo -e "${RED}[!] Файл результатов не найден или пуст.${NC}"; return; }
+    [[ ! -f "$file" ]] && { echo -e "${RED}[!] Файл $file не найден.${NC}"; return; }
 
     echo -e "\n${MAGENTA}======================================================${NC}"
     echo -e "${BOLD}🤖 АНАЛИЗАТОР: РЕКОМЕНДАЦИИ ПО ВЫБОРУ ЦЕЛИ${NC}"
     echo -e "${MAGENTA}======================================================${NC}"
     
-    echo -e "${GRAY}Для максимальной маскировки желательно, чтобы домен находился${NC}"
-    echo -e "${GRAY}в той же стране, что и ваш сервер (меньше подозрений у DPI).${NC}"
-    read -p "Введите страну ВАШЕГО сервера (например NL, DE, US, RU) [Enter = пропустить]: " my_geo
-    my_geo=$(echo "$my_geo" | tr '[:lower:]' '[:upper:]')
+    echo -e "${GRAY}Для максимальной маскировки домен должен находиться${NC}"
+    echo -e "${GRAY}в той же стране, что и ваш VPN-сервер.${NC}"
+    
+    # Пытаемся автоматически определить ГЕО сервера
+    local server_geo=$(curl -s --max-time 3 ipinfo.io/country 2>/dev/null | tr -d '[:space:]' | tr '[:lower:]' '[:upper:]')
+    local my_geo=""
 
-    echo -e "\n${CYAN}Анализируем результаты...${NC}"
-    # Отсеиваем только известные и доверенные сертификаты (убираем мусор)
+    if [[ -n "$server_geo" && ${#server_geo} -eq 2 ]]; then
+        echo -e "${CYAN}[*] Автоопределение: Ваш сервер находится в ${YELLOW}${server_geo}${NC}"
+        read -p ">> Использовать ГЕО [${server_geo}]? (Enter = Да, 'n' = Отключить фильтр, или введите свой код): " user_input
+        
+        if [[ -z "$user_input" ]]; then
+            my_geo="$server_geo"
+        elif [[ "$user_input" == "n" || "$user_input" == "N" ]]; then
+            my_geo=""
+        else
+            my_geo="$user_input"
+        fi
+    else
+        read -p ">> Страна (например FI, NL, DE, RU) [Enter = пропустить фильтр]: " my_geo
+    fi
+    
+    my_geo=$(echo "$my_geo" | tr -d '[:space:]' | tr '[:lower:]' '[:upper:]')
+
+    echo -e "\n${CYAN}Анализируем файл: $(basename "$file")...${NC}"
+    
+    # Отсеиваем надежных издателей сертификатов (убираем мусор)
     local filtered=$(tail -n +2 "$file" | grep -iE "Let's Encrypt|Google|DigiCert|Cloudflare|Sectigo|ZeroSSL|GlobalSign")
 
-    # Фильтруем по ГЕО, если пользователь ввел код страны
+    # Жесткий фильтр по ГЕО
     if [[ -n "$my_geo" ]]; then
-        echo -e "${GRAY}[*] Ищем домены в стране: $my_geo...${NC}"
         local geo_matched=$(echo "$filtered" | grep ",$my_geo$")
         if [[ -n "$geo_matched" ]]; then
             filtered="$geo_matched"
-            echo -e "${GREEN}[+] Найдены совпадения по вашей локации!${NC}"
+            echo -e "${GREEN}[+] Найдены идеальные домены в стране $my_geo!${NC}"
         else
-            echo -e "${YELLOW}[!] Идеальных совпадений по ГЕО ($my_geo) не найдено. Показываю лучшие из других стран.${NC}"
+            echo -e "${RED}[!] Доменов с геопозицией ($my_geo) в этом отчете не найдено.${NC}"
+            echo -e "${YELLOW}Показываю лучшие варианты из других стран...${NC}"
         fi
     fi
 
+    # Берем ТОП-7 лучших совпадений
     local best=$(echo "$filtered" | head -n 7)
 
     if [[ -z "$best" ]]; then
-        echo -e "${RED}Подходящих целей (TLS 1.3 + HTTP/2 + Хороший Issuer) не найдено.${NC}"
+        echo -e "${RED}Подходящих целей (TLS 1.3 + HTTP/2 + Надежный сертификат) не найдено.${NC}"
     else
         echo -e "\n${GREEN}🏆 ТОП РЕКОМЕНДУЕМЫХ ДОМЕНОВ:${NC}"
         echo -e "${BLUE}------------------------------------------------------${NC}"
         echo "$best" | awk -F',' '{print "📍 Домен: \033[1;32m" $3 "\033[0m\n   └─ IP: " $1 " | ГЕО: \033[1;33m" $5 "\033[0m | Издатель: " $4 "\n"}'
     fi
-    echo -e "${MAGENTA}======================================================${NC}"
     pause
 }
 
-# --- 3. ИНТЕРАКТИВНЫЙ ЗАПУСК ---
+# --- 3. ИНТЕРАКТИВНЫЙ ЗАПУСК С ОПЦИЯМИ ---
 run_scanner() {
     local mode=$1
     local target=$2
+    
+    # Формируем красивое имя файла на основе цели (например: scan_64_188_76_243_1711...csv)
+    local safe_target=$(echo "$target" | sed 's/[^a-zA-Z0-9]/_/g' | cut -c 1-20)
+    local out_file="scan_${safe_target}_$(date +%s).csv"
 
     echo -e "\n${CYAN}--- Тонкая настройка сканирования ---${NC}"
-    read -p "Порт (Enter = 443): " s_port
-    s_port=${s_port:-443}
+    read -p "Порт (Enter = 443): " s_port; s_port=${s_port:-443}
+    read -p "Потоков (Enter = 10): " s_thread; s_thread=${s_thread:-10}
+    read -p "Таймаут проверки в сек (Enter = 5): " s_timeout; s_timeout=${s_timeout:-5}
+    read -p "Включить IPv6 сканирование? (y/N): " s_ipv6
+    read -p "Подробный вывод логов на экран (Verbose)? (y/N): " s_verb
 
-    read -p "Потоков (Enter = 10): " s_thread
-    s_thread=${s_thread:-10}
-
-    read -p "Таймаут проверки в сек (Enter = 5): " s_timeout
-    s_timeout=${s_timeout:-5}
-
-    local out_file="result_$(date +%s).csv"
+    local extra_args=""
+    [[ "$s_ipv6" == "y" || "$s_ipv6" == "Y" ]] && extra_args+=" -46"
+    [[ "$s_verb" == "y" || "$s_verb" == "Y" ]] && extra_args+=" -v"
 
     echo -e "\n${GREEN}[*] Запуск сканирования...${NC}"
-    echo -e "${YELLOW}(Нажмите Ctrl+C, если хотите прервать скан досрочно)${NC}\n"
+    echo -e "${YELLOW}(Нажмите Ctrl+C, когда захотите прервать скан)${NC}\n"
     
     cd "$SCANNER_DIR" || return
     export PATH=/usr/local/go/bin:$PATH
     
-    ./RealiTLScanner -"$mode" "$target" -port "$s_port" -thread "$s_thread" -timeout "$s_timeout" -out "$out_file"
+    # Запуск
+    ./RealiTLScanner -"$mode" "$target" -port "$s_port" -thread "$s_thread" -timeout "$s_timeout" -out "$out_file" $extra_args
 
     echo -e "\n${GREEN}[+] Сканирование завершено!${NC}"
+    echo -e "Файл сохранен как: ${CYAN}$out_file${NC}"
     analyze_results "$SCANNER_DIR/$out_file"
 }
 
-# --- 4. РАБОТА С ФАЙЛОМ IN.TXT ---
+# --- 4. МЕНЕДЖЕР ОТЧЕТОВ (ПУНКТ 8) ---
+manage_reports() {
+    while true; do
+        clear
+        echo -e "${MAGENTA}=== 📂 МЕНЕДЖЕР СОХРАНЕННЫХ ОТЧЕТОВ ===${NC}"
+        
+        # Считываем все CSV файлы в массив
+        mapfile -t CSV_FILES < <(ls -1 "$SCANNER_DIR"/*.csv 2>/dev/null)
+        
+        if [[ ${#CSV_FILES[@]} -eq 0 ]]; then
+            echo -e "${YELLOW}Отчетов пока нет. Запустите сканирование.${NC}"
+            pause; return
+        fi
+
+        # Вывод списка файлов с их размером и красивым именем
+        for i in "${!CSV_FILES[@]}"; do
+            local f_size=$(du -sh "${CSV_FILES[$i]}" | awk '{print $1}')
+            local f_name=$(basename "${CSV_FILES[$i]}")
+            echo -e " ${YELLOW}$((i+1)).${NC} ${CYAN}$f_name${NC} ${GRAY}($f_size)${NC}"
+        done
+
+        echo -e "${BLUE}------------------------------------------------------${NC}"
+        echo -e " Управление:"
+        echo -e " 👉 Введите ${YELLOW}НОМЕР${NC} файла, чтобы посмотреть всю таблицу."
+        echo -e " 👉 Введите ${GREEN}aНОМЕР${NC} (например, ${BOLD}a1${NC}), чтобы запустить Умный Анализ."
+        echo -e " 👉 Введите ${RED}dНОМЕР${NC} (например, ${BOLD}d1${NC}), чтобы удалить отчет."
+        echo -e " ${CYAN}0.${NC} Назад"
+        
+        read -p ">> " r_choice
+
+        if [[ "$r_choice" == "0" ]]; then return; fi
+        
+        # Обработка удаления (d1, d2)
+        if [[ "$r_choice" =~ ^d([0-9]+)$ ]]; then
+            local idx=$((${BASH_REMATCH[1]}-1))
+            if [[ -n "${CSV_FILES[$idx]}" ]]; then
+                rm -f "${CSV_FILES[$idx]}"
+                echo -e "${GREEN}Файл удален!${NC}"; sleep 1
+            fi
+        # Обработка анализа (a1, a2)
+        elif [[ "$r_choice" =~ ^a([0-9]+)$ ]]; then
+            local idx=$((${BASH_REMATCH[1]}-1))
+            if [[ -n "${CSV_FILES[$idx]}" ]]; then
+                analyze_results "${CSV_FILES[$idx]}"
+            fi
+        # Обработка просмотра (1, 2)
+        elif [[ "$r_choice" =~ ^[0-9]+$ ]]; then
+            local idx=$((r_choice-1))
+            if [[ -n "${CSV_FILES[$idx]}" ]]; then
+                column -t -s ',' "${CSV_FILES[$idx]}" | less -S
+            fi
+        else
+            echo -e "${RED}Неверный ввод.${NC}"; sleep 1
+        fi
+    done
+}
+
 manage_input_file() {
     clear
     echo -e "${MAGENTA}=== УПРАВЛЕНИЕ СПИСКОМ ЦЕЛЕЙ (in.txt) ===${NC}"
-    echo -e "${GRAY}Путь к файлу:${NC} $INPUT_FILE"
-    echo -e "${CYAN}Инструкция:${NC} Впишите каждый IP, CIDR или Домен с новой строки.\n"
-    
-    if [[ ! -f "$INPUT_FILE" ]]; then
-        touch "$INPUT_FILE"
-        echo -e "${YELLOW}[!] Создан пустой файл.${NC}"
-    fi
-
+    if [[ ! -f "$INPUT_FILE" ]]; then touch "$INPUT_FILE"; fi
     echo -e " ${YELLOW}1.${NC} 📝 Редактировать список (Откроется в nano)"
-    echo -e " ${YELLOW}2.${NC} 🔍 Запустить скан по этому списку"
+    echo -e " ${YELLOW}2.${NC} 🔍 Запустить скан по списку"
     echo -e " ${CYAN}0.${NC} ↩️  Назад"
-    
     read -p ">> " in_choice
     case $in_choice in
         1) nano "$INPUT_FILE" ;;
-        2) 
-            if [[ ! -s "$INPUT_FILE" ]]; then
-                echo -e "${RED}Ошибка: Файл пуст! Сначала добавьте цели.${NC}"; sleep 2
-            else
-                run_scanner "in" "$INPUT_FILE"
-            fi ;;
+        2) [[ ! -s "$INPUT_FILE" ]] && echo "Файл пуст!" || run_scanner "in" "$INPUT_FILE" ;;
         0) return ;;
     esac
 }
 
-# --- ГЛАВНОЕ МЕНЮ МОДУЛЯ ---
 menu_scanner() {
     check_scanner_install || return
     while true; do
@@ -158,19 +222,23 @@ menu_scanner() {
         echo -e "  Умный поиск идеальных доменов для маскировки."
         echo -e "${BLUE}======================================================${NC}"
         
-        echo -e " ${YELLOW}1.${NC} Быстрый скан одного IP / Домена"
+        echo -e " ${YELLOW}1.${NC} Строгий скан одного IP / Домена"
         echo -e " ${YELLOW}2.${NC} Скан подсети (CIDR, например 104.21.0.0/24)"
         echo -e " ${YELLOW}3.${NC} Бесконечный поиск (Infinity Mode от IP)"
         echo -e " ${YELLOW}4.${NC} 📂 Работа со списком (файл in.txt)"
         echo -e " ${YELLOW}5.${NC} Сбор и скан доменов с URL-страницы"
         echo -e "${BLUE}------------------------------------------------------${NC}"
-        echo -e " ${CYAN}8.${NC} Посмотреть все файлы отчетов в папке"
+        echo -e " ${CYAN}8.${NC} 📂 Менеджер Отчетов (Просмотр / Анализ / Удаление)"
         echo -e " ${RED}0.${NC} ↩️ Назад"
         
         read -p ">> " s_choice
         case $s_choice in
             1) 
                 read -p "Введите цель (IP или домен): " target
+                # Добавляем /32 к IP, чтобы отключить бесконечный режим (Infinity Mode)
+                if [[ "$target" =~ ^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+                    target="${target}/32"
+                fi
                 [[ -n "$target" ]] && run_scanner "addr" "$target" ;;
             2) 
                 read -p "Введите подсеть (CIDR): " sub
@@ -182,15 +250,7 @@ menu_scanner() {
             5)
                 read -p "URL (например https://launchpad.net/ubuntu/+archivemirrors): " s_url
                 [[ -n "$s_url" ]] && run_scanner "url" "$s_url" ;;
-            8)
-                clear
-                echo -e "${MAGENTA}=== СОХРАНЕННЫЕ ОТЧЕТЫ ===${NC}"
-                ls -lh "$SCANNER_DIR"/*.csv 2>/dev/null | awk '{print $5, $9}'
-                echo ""
-                read -p "Введите имя файла для просмотра (или Enter для выхода): " csv_file
-                if [[ -n "$csv_file" && -f "$csv_file" ]]; then
-                    column -t -s ',' "$csv_file" | less -S
-                fi ;;
+            8) manage_reports ;;
             0) return ;;
         esac
     done
