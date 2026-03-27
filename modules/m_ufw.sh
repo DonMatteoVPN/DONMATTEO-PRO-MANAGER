@@ -16,6 +16,40 @@ get_ufw_status() {
     if ufw status | grep -qw active; then echo -e "${GREEN}[РАБОТАЕТ]${NC}"; else echo -e "${RED}[ВЫКЛЮЧЕН]${NC}"; fi
 }
 
+# Функция получения статуса логирования
+get_ufw_log_status() {
+    if ufw status verbose | grep -q "logging: on"; then
+        echo -e "${GREEN}[ВКЛЮЧЕНЫ]${NC}"
+    else
+        echo -e "${RED}[ВЫКЛЮЧЕНЫ]${NC}"
+    fi
+}
+
+# --- ВНУТРЕННЯЯ ФУНКЦИЯ: ПРОВЕРКА И УСТАНОВКА RSYSLOG ---
+ensure_rsyslog() {
+    if ! command -v rsyslogd &> /dev/null; then
+        echo -e "${CYAN}[*] Служба rsyslog не найдена. Установка для работы логов...${NC}"
+        apt-get update -qq && apt-get install rsyslog -y -qq
+        systemctl enable --now rsyslog >/dev/null 2>&1
+        # Даем немного времени на инициализацию файла лога
+        sleep 2
+    fi
+
+    if ! systemctl is-active --quiet rsyslog; then
+        echo -e "${YELLOW}[*] Запуск службы rsyslog...${NC}"
+        systemctl start rsyslog
+    fi
+
+    # Проверяем, существует ли файл лога, если нет - создаем пустой
+    if [ ! -f /var/log/ufw.log ]; then
+        touch /var/log/ufw.log
+        chmod 640 /var/log/ufw.log
+        chown syslog:adm /var/log/ufw.log
+    fi
+}
+
+
+
 # --- ГЛАВНАЯ ФУНКЦИЯ СБОРКИ ПРАВИЛ ---
 ufw_global_setup() {
     echo -e "${CYAN}[*] Пересборка правил Anti-DDoS и перезапуск UFW...${NC}"
@@ -144,6 +178,82 @@ ufw_limits_menu() {
     done
 }
 
+# --- МЕНЮ ЛОГОВ ---
+ufw_logs_menu() {
+    # ПРОВЕРКА ЗАВИСИМОСТЕЙ ПРИ ВХОДЕ
+    ensure_rsyslog
+
+    while true; do
+        clear
+        echo -e "${BLUE}======================================================${NC}"
+        echo -e "${BOLD}${MAGENTA}  📊 ЛОГИ И АНАЛИТИКА FIREWALL ${NC}$(get_ufw_log_status)"
+        echo -e "${GRAY} Позволяет видеть, кто и какие порты атакует прямо сейчас.${NC}"
+        echo -e "${BLUE}======================================================${NC}"
+        echo -e " ${YELLOW}1.${NC} 🟢 Включить логирование (Обычное)"
+        echo -e " ${YELLOW}2.${NC} 🟠 Включить логирование (Детальное - HIGH)"
+        echo -e " ${YELLOW}3.${NC} 🔴 Выключить логирование"
+        echo -e "${BLUE}------------------------------------------------------${NC}"
+        echo -e " ${GREEN}4.${NC} 🕵️  Смотреть блокировки LIVE (В реальном времени)"
+        echo -e " ${GREEN}5.${NC} 🏆 ТОП-10 атакующих IP (Статистика из логов)"
+        echo -e " ${GREEN}6.${NC} 🎯 ТОП атакуемых портов"
+        echo -e " ${CYAN}0.${NC} ↩️  Назад"
+        read -p ">> " ch
+        case $ch in
+            1) ufw logging on; echo -e "${GREEN}Логи включены (low)${NC}"; sleep 1 ;;
+            2) ufw logging high; echo -e "${ORANGE}Логи включены (high)${NC}"; sleep 1 ;;
+            3) ufw logging off; echo -e "${RED}Логи выключены${NC}"; sleep 1 ;;
+            4) view_ufw_logs_live ;;
+            5) show_top_attackers ;;
+            6) show_top_ports ;;
+            0) return ;;
+        esac
+    done
+}
+
+# --- ФУНКЦИИ АНАЛИЗА ---
+
+view_ufw_logs_live() {
+    clear
+    echo -e "${YELLOW}Мониторинг блокировок (Нажмите Ctrl+C для выхода)...${NC}"
+    echo -e "${GRAY}Вы будете видеть только события [BLOCK] и [LIMIT]${NC}\n"
+    
+    # Проверка наполнения лога
+    if [ ! -s /var/log/ufw.log ]; then
+        echo -e "${YELLOW}Лог-файл пока пуст. Попробуйте обновить страницу позже,${NC}"
+        echo -e "${YELLOW}когда появятся первые заблокированные запросы.${NC}"
+        pause; return
+    fi
+
+    tail -f /var/log/ufw.log | grep --line-buffered -E "\[UFW (BLOCK|LIMIT)\]" | awk '{
+        match($0, /SRC=([0-9.]+)/, src);
+        match($0, /DPT=([0-9]+)/, dpt);
+        match($0, /PROTO=([A-Z]+)/, proto);
+        # Если DPT не найден (например в ICMP), ставим прочерк
+        port = (dpt[1] ? dpt[1] : "---");
+        print "\033[1;31m[DROP]\033[0m IP: \033[1;33m" src[1] "\033[0m -> Port: \033[1;36m" port "\033[0m (" proto[1] ")"
+    }'
+}
+
+show_top_attackers() {
+    clear
+    echo -e "${MAGENTA}=== ТОП-10 IP ПОД БЛОКИРОВКОЙ ===${NC}"
+    echo -e "${GRAY}На основе текущего файла /var/log/ufw.log${NC}\n"
+    
+    if [ ! -s /var/log/ufw.log ]; then echo -e "${RED}Файл логов пуст.${NC}"; pause; return; fi
+    
+    grep "UFW BLOCK" /var/log/ufw.log | awk -F'SRC=' '{print $2}' | awk '{print $1}' | sort | uniq -c | sort -nr | head -n 10 | awk '{print "  [" $1 " атак] - " $2}'
+    pause
+}
+
+show_top_ports() {
+    clear
+    echo -e "${MAGENTA}=== САМЫЕ АТАКУЕМЫЕ ПОРТЫ ===${NC}\n"
+    if [ ! -s /var/log/ufw.log ]; then echo -e "${RED}Файл логов пуст.${NC}"; pause; return; fi
+    
+    grep "UFW BLOCK" /var/log/ufw.log | awk -F'DPT=' '{print $2}' | awk '{print $1}' | sort | uniq -c | sort -nr | head -n 5 | awk '{print "  Порт " $2 " - заблокировано " $1 " запросов"}'
+    pause
+}
+
 show_vpn_limits_help() {
     clear
     echo -e "${MAGENTA}=== СПРАВКА ПО ЛИМИТАМ ДЛЯ VPN ===${NC}\n"
@@ -192,6 +302,8 @@ ufw_show_delete() {
     done
 }
 
+# --- ОБНОВЛЕННОЕ ГЛАВНОЕ МЕНЮ МОДУЛЯ ---
+
 menu_ufw() {
     while true; do
         clear
@@ -202,11 +314,17 @@ menu_ufw() {
         echo -e " ${YELLOW}1.${NC} 🔓 Открыть порт (Для всех)"
         echo -e " ${YELLOW}2.${NC} 🎯 Открыть порт (Для конкретного IP)"
         echo -e " ${YELLOW}3.${NC} 📋 Просмотр активных правил и Удаление"
-        echo -e " ${YELLOW}4.${NC} ⚙️  Управление портами защиты (DDoS Лимиты)"
+        echo -e " ${YELLOW}4.${NC} ⚙️  Управление лимитами (Anti-DDoS)"
+        echo -e " ${YELLOW}5.${NC} 📊 Логи и Аналитика (Кто атакует?) \e[40G${NC}$(get_ufw_log_status)"
         echo -e " ${CYAN}0.${NC} ↩️  Назад"
         read -p ">> " choice
         case $choice in
-            1) ufw_add_port ;; 2) ufw_add_ip ;; 3) ufw_show_delete ;; 4) ufw_limits_menu ;; 0) return ;;
+            1) ufw_add_port ;; 
+            2) ufw_add_ip ;; 
+            3) ufw_show_delete ;; 
+            4) ufw_limits_menu ;; 
+            5) ufw_logs_menu ;;
+            0) return ;;
         esac
     done
 }
