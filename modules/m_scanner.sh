@@ -56,7 +56,6 @@ analyze_results() {
     echo -e "${GRAY}Для максимальной маскировки домен должен находиться${NC}"
     echo -e "${GRAY}в той же стране, что и ваш VPN-сервер.${NC}"
     
-    # Пытаемся автоматически определить ГЕО сервера
     local server_geo=$(curl -s --max-time 3 ipinfo.io/country 2>/dev/null | tr -d '[:space:]' | tr '[:lower:]' '[:upper:]')
     local my_geo=""
 
@@ -79,10 +78,8 @@ analyze_results() {
 
     echo -e "\n${CYAN}Анализируем файл: $(basename "$file")...${NC}"
     
-    # Отсеиваем надежных издателей сертификатов (убираем мусор)
     local filtered=$(tail -n +2 "$file" | grep -iE "Let's Encrypt|Google|DigiCert|Cloudflare|Sectigo|ZeroSSL|GlobalSign")
 
-    # Жесткий фильтр по ГЕО
     if [[ -n "$my_geo" ]]; then
         local geo_matched=$(echo "$filtered" | grep ",$my_geo$")
         if [[ -n "$geo_matched" ]]; then
@@ -94,7 +91,6 @@ analyze_results() {
         fi
     fi
 
-    # Берем ТОП-7 лучших совпадений
     local best=$(echo "$filtered" | head -n 7)
 
     if [[ -z "$best" ]]; then
@@ -107,21 +103,47 @@ analyze_results() {
     pause
 }
 
-# --- 3. ИНТЕРАКТИВНЫЙ ЗАПУСК С ОПЦИЯМИ ---
+# --- 3. ИНТЕРАКТИВНЫЙ ЗАПУСК С ПОДРОБНЫМИ ПОДСКАЗКАМИ ---
 run_scanner() {
     local mode=$1
     local target=$2
     
-    # Формируем красивое имя файла на основе цели (например: scan_64_188_76_243_1711...csv)
     local safe_target=$(echo "$target" | sed 's/[^a-zA-Z0-9]/_/g' | cut -c 1-20)
     local out_file="scan_${safe_target}_$(date +%s).csv"
 
-    echo -e "\n${CYAN}--- Тонкая настройка сканирования ---${NC}"
-    read -p "Порт (Enter = 443): " s_port; s_port=${s_port:-443}
-    read -p "Потоков (Enter = 10): " s_thread; s_thread=${s_thread:-10}
-    read -p "Таймаут проверки в сек (Enter = 5): " s_timeout; s_timeout=${s_timeout:-5}
-    read -p "Включить IPv6 сканирование? (y/N): " s_ipv6
-    read -p "Подробный вывод логов на экран (Verbose)? (y/N): " s_verb
+    clear
+    echo -e "${MAGENTA}======================================================${NC}"
+    echo -e "${BOLD} ⚙️  НАСТРОЙКА ПАРАМЕТРОВ СКАНИРОВАНИЯ${NC}"
+    echo -e "${MAGENTA}======================================================${NC}"
+    echo -e "${GRAY}Настройте параметры ниже или просто нажимайте Enter,${NC}"
+    echo -e "${GRAY}чтобы использовать оптимальные значения по умолчанию.${NC}\n"
+
+    echo -e "${CYAN}1. Целевой Порт (-port)${NC}"
+    echo -e "   По умолчанию Reality работает через HTTPS порт 443."
+    read -p ">> Порт (Enter = 443): " s_port; s_port=${s_port:-443}
+    echo ""
+
+    echo -e "${CYAN}2. Количество потоков (-thread)${NC}"
+    echo -e "   Сколько адресов проверять одновременно. Больше потоков = быстрее скан,"
+    echo -e "   но слишком высокое значение может перегрузить ваш сервер."
+    read -p ">> Потоков (Enter = 10): " s_thread; s_thread=${s_thread:-10}
+    echo ""
+
+    echo -e "${CYAN}3. Таймаут (-timeout)${NC}"
+    echo -e "   Сколько секунд ждать ответа от сервера. Меньше = быстрее скан,"
+    echo -e "   но вы можете пропустить рабочие, но медленные сервера."
+    read -p ">> Таймаут в сек (Enter = 10): " s_timeout; s_timeout=${s_timeout:-10}
+    echo ""
+
+    echo -e "${CYAN}4. Поддержка IPv6 (-46)${NC}"
+    echo -e "   Если ваш сервер поддерживает IPv6, сканер будет искать цели и в этой сети."
+    read -p ">> Включить сканирование IPv6? (y/N): " s_ipv6
+    echo ""
+
+    echo -e "${CYAN}5. Подробный вывод логов (-v)${NC}"
+    echo -e "   Показывать на экране абсолютно все попытки, включая неудачные,"
+    echo -e "   закрытые порты и сервера с плохими сертификатами."
+    read -p ">> Включить Verbose? (y/N): " s_verb
 
     local extra_args=""
     [[ "$s_ipv6" == "y" || "$s_ipv6" == "Y" ]] && extra_args+=" -46"
@@ -133,7 +155,7 @@ run_scanner() {
     cd "$SCANNER_DIR" || return
     export PATH=/usr/local/go/bin:$PATH
     
-    # Запуск
+    # Строгий запуск с одним из режимов: -addr, -in или -url
     ./RealiTLScanner -"$mode" "$target" -port "$s_port" -thread "$s_thread" -timeout "$s_timeout" -out "$out_file" $extra_args
 
     echo -e "\n${GREEN}[+] Сканирование завершено!${NC}"
@@ -141,13 +163,12 @@ run_scanner() {
     analyze_results "$SCANNER_DIR/$out_file"
 }
 
-# --- 4. МЕНЕДЖЕР ОТЧЕТОВ (ПУНКТ 8) ---
+# --- 4. МЕНЕДЖЕР ОТЧЕТОВ ---
 manage_reports() {
     while true; do
         clear
         echo -e "${MAGENTA}=== 📂 МЕНЕДЖЕР СОХРАНЕННЫХ ОТЧЕТОВ ===${NC}"
         
-        # Считываем все CSV файлы в массив
         mapfile -t CSV_FILES < <(ls -1 "$SCANNER_DIR"/*.csv 2>/dev/null)
         
         if [[ ${#CSV_FILES[@]} -eq 0 ]]; then
@@ -155,7 +176,6 @@ manage_reports() {
             pause; return
         fi
 
-        # Вывод списка файлов с их размером и красивым именем
         for i in "${!CSV_FILES[@]}"; do
             local f_size=$(du -sh "${CSV_FILES[$i]}" | awk '{print $1}')
             local f_name=$(basename "${CSV_FILES[$i]}")
@@ -173,20 +193,17 @@ manage_reports() {
 
         if [[ "$r_choice" == "0" ]]; then return; fi
         
-        # Обработка удаления (d1, d2)
         if [[ "$r_choice" =~ ^d([0-9]+)$ ]]; then
             local idx=$((${BASH_REMATCH[1]}-1))
             if [[ -n "${CSV_FILES[$idx]}" ]]; then
                 rm -f "${CSV_FILES[$idx]}"
                 echo -e "${GREEN}Файл удален!${NC}"; sleep 1
             fi
-        # Обработка анализа (a1, a2)
         elif [[ "$r_choice" =~ ^a([0-9]+)$ ]]; then
             local idx=$((${BASH_REMATCH[1]}-1))
             if [[ -n "${CSV_FILES[$idx]}" ]]; then
                 analyze_results "${CSV_FILES[$idx]}"
             fi
-        # Обработка просмотра (1, 2)
         elif [[ "$r_choice" =~ ^[0-9]+$ ]]; then
             local idx=$((r_choice-1))
             if [[ -n "${CSV_FILES[$idx]}" ]]; then
@@ -221,12 +238,24 @@ menu_scanner() {
         echo -e "${BOLD}  🔍 REALITY - TLS - SCANNER${NC}"
         echo -e "  Умный поиск идеальных доменов для маскировки."
         echo -e "${BLUE}======================================================${NC}"
+        echo -e "${GRAY} ВАЖНО: Сканер принимает только один режим за раз.${NC}"
+        echo -e "${GRAY} Выберите, откуда брать цели для проверки:${NC}\n"
+
+        echo -e " ${YELLOW}1.${NC} Строгий скан одного IP / Домена   ${GRAY}(-addr)${NC}"
+        echo -e "    └─ Быстрая разовая проверка конкретного узла."
         
-        echo -e " ${YELLOW}1.${NC} Строгий скан одного IP / Домена"
-        echo -e " ${YELLOW}2.${NC} Скан подсети (CIDR, например 104.21.0.0/24)"
-        echo -e " ${YELLOW}3.${NC} Бесконечный поиск (Infinity Mode от IP)"
-        echo -e " ${YELLOW}4.${NC} 📂 Работа со списком (файл in.txt)"
-        echo -e " ${YELLOW}5.${NC} Сбор и скан доменов с URL-страницы"
+        echo -e " ${YELLOW}2.${NC} Скан подсети (CIDR)               ${GRAY}(-addr)${NC}"
+        echo -e "    └─ Проверка пула адресов, например 104.21.0.0/24."
+        
+        echo -e " ${YELLOW}3.${NC} Бесконечный поиск (Infinity Mode) ${GRAY}(-addr)${NC}"
+        echo -e "    └─ Скрипт берет стартовый IP и сканирует бесконечно вверх и вниз."
+        
+        echo -e " ${YELLOW}4.${NC} 📂 Работа со списком (in.txt)     ${GRAY}(-in)${NC}"
+        echo -e "    └─ Читает цели из файла (каждый IP/Домен с новой строки)."
+        
+        echo -e " ${YELLOW}5.${NC} Сбор доменов с веб-страницы       ${GRAY}(-url)${NC}"
+        echo -e "    └─ Вытаскивает домены с указанного URL (например, списки зеркал)."
+        
         echo -e "${BLUE}------------------------------------------------------${NC}"
         echo -e " ${CYAN}8.${NC} 📂 Менеджер Отчетов (Просмотр / Анализ / Удаление)"
         echo -e " ${RED}0.${NC} ↩️ Назад"
@@ -248,7 +277,8 @@ menu_scanner() {
                 [[ -n "$s_ip" ]] && run_scanner "addr" "$s_ip" ;;
             4) manage_input_file ;;
             5)
-                read -p "URL (например https://launchpad.net/ubuntu/+archivemirrors): " s_url
+                echo -e "${GRAY}Пример: https://launchpad.net/ubuntu/+archivemirrors${NC}"
+                read -p "URL со списком: " s_url
                 [[ -n "$s_url" ]] && run_scanner "url" "$s_url" ;;
             8) manage_reports ;;
             0) return ;;
