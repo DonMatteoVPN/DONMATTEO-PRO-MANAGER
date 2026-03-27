@@ -57,7 +57,6 @@ run_single_scan() {
     read -p ">> Введите цель (IP или Домен): " target
     [[ -z "$target" ]] && return
 
-    # Отключаем бесконечный поиск для IPv4
     if [[ "$target" =~ ^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$ ]]; then target="${target}/32"; fi
 
     read -p ">> Порт(ы) через запятую (Enter = 443): " s_port
@@ -182,7 +181,7 @@ analyze_results() {
     fi
 }
 
-# --- 4. МАССОВЫЙ СКАНЕР С ЛИМИТАМИ И СОХРАНЕНИЕМ (ДЛЯ ПУНКТОВ 2-5) ---
+# --- 4. МАССОВЫЙ СКАНЕР (ДЛЯ ПУНКТОВ 2-5) ---
 run_scanner() {
     local mode=$1
     local target=$2
@@ -196,13 +195,11 @@ run_scanner() {
     echo -e "${CYAN}Для чего это нужно?${NC}"
     echo -e "${GRAY}$description${NC}\n"
 
-    # Если цель не передана при вызове (например, из пунктов 4 и 5), запрашиваем ее
     if [[ -z "$target" ]]; then
         read -p ">> Введите цель: " target
         [[ -z "$target" ]] && return
     fi
 
-    # Авто-подстановка /32 только для режима addr с конкретным IP, чтобы он не ушел в бесконечность
     if [[ "$mode" == "addr" && "$target" =~ ^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$ ]]; then target="${target}/32"; fi
 
     local safe_target=$(echo "$target" | sed 's/[^a-zA-Z0-9]/_/g' | cut -c 1-15)
@@ -240,24 +237,28 @@ run_scanner() {
         echo -e "${MAGENTA}>>> СКАНИРОВАНИЕ ПОРТА: ${current_port} <<<${NC}"
         local tmp_csv="tmp_scan_${current_port}.csv"
         
+        # Запуск сканера в фоновом режиме (тихо)
         ./RealiTLScanner -"$mode" "$target" -port "$current_port" -thread "$s_thread" -timeout "$s_timeout" -out "$tmp_csv" >/dev/null 2>&1 &
         local SCAN_PID=$!
         
-        trap 'kill $SCAN_PID 2>/dev/null; echo -e "\n${YELLOW}Остановлено пользователем.${NC}"; break' INT
+        trap 'kill $SCAN_PID 2>/dev/null; echo -e "\n\n${YELLOW}Остановлено пользователем.${NC}"; break' INT
 
-        if [[ "$s_limit" -gt 0 ]]; then
-            while kill -0 $SCAN_PID 2>/dev/null; do
-                local current_count=$(wc -l < "$tmp_csv" 2>/dev/null || echo 0)
-                if [[ "$current_count" -ge "$s_limit" ]]; then
-                    echo -e "${GREEN}[+] Лимит ($s_limit) достигнут! Останавливаем сканер...${NC}"
-                    kill $SCAN_PID 2>/dev/null
-                    break
-                fi
-                sleep 2
-            done
-        else
-            wait $SCAN_PID
-        fi
+        # ЖИВОЙ ИНДИКАТОР ПРОГРЕССА
+        while kill -0 $SCAN_PID 2>/dev/null; do
+            local current_count=$(wc -l < "$tmp_csv" 2>/dev/null || echo 0)
+            local actual_count=$((current_count > 0 ? current_count - 1 : 0)) # Вычитаем заголовок таблицы
+            
+            # Обновляемая строка в терминале (\r возвращает каретку в начало строки)
+            echo -ne "\r${CYAN}⏳ Идет сканирование... Найдено рабочих SNI: ${GREEN}${actual_count}${NC}  "
+            
+            if [[ "$s_limit" -gt 0 && "$actual_count" -ge "$s_limit" ]]; then
+                echo -e "\n${GREEN}[+] Лимит ($s_limit) достигнут! Останавливаем сканер...${NC}"
+                kill $SCAN_PID 2>/dev/null
+                break
+            fi
+            sleep 2
+        done
+        echo -e "" # Перенос строки после завершения цикла
         trap - INT
 
         if [[ -f "$tmp_csv" ]]; then
@@ -266,12 +267,9 @@ run_scanner() {
         fi
     done
 
-    echo -e "\n${GREEN}[+] Сканирование завершено!${NC}"
-    
-    # Запускаем Умный Анализ
+    echo -e "${GREEN}[+] Сканирование завершено!${NC}"
     analyze_results "$SCANNER_DIR/$out_file"
 
-    # Вопрос о сохранении
     echo -e "\n${BLUE}======================================================${NC}"
     read -p ">> Сохранить этот отчет в Менеджере Отчетов? (Y/n): " keep_report
     if [[ "$keep_report" == "n" || "$keep_report" == "N" ]]; then
@@ -344,6 +342,28 @@ manage_reports() {
     done
 }
 
+manage_input_file() {
+    clear
+    echo -e "${MAGENTA}=== УПРАВЛЕНИЕ СПИСКОМ ЦЕЛЕЙ (in.txt) ===${NC}"
+    if [[ ! -f "$INPUT_FILE" ]]; then touch "$INPUT_FILE"; fi
+    echo -e " ${YELLOW}1.${NC} 📝 Редактировать список (nano)"
+    echo -e " ${YELLOW}2.${NC} 🔍 Запустить скан по списку"
+    echo -e " ${CYAN}0.${NC} ↩️  Назад"
+    read -p ">> " in_choice
+    case $in_choice in
+        1) nano "$INPUT_FILE" ;;
+        2) 
+            if [[ ! -s "$INPUT_FILE" ]]; then
+                echo -e "${RED}Файл пуст!${NC}"; sleep 2
+            else
+                local title="📂 РЕЖИМ: СКАН ПО СПИСКУ ЦЕЛЕЙ (IN.TXT)"
+                local desc="Скрипт поочередно проверяет все IP и домены из вашего файла $INPUT_FILE."
+                run_scanner "in" "$INPUT_FILE" "$title" "$desc"
+            fi ;;
+        0) return ;;
+    esac
+}
+
 menu_scanner() {
     check_scanner_install || return
     
@@ -358,19 +378,19 @@ menu_scanner() {
         echo -e "${BLUE}======================================================${NC}"
 
         echo -e " ${YELLOW}1.${NC} Строгий скан одного IP / Домена   ${GRAY}(-addr)${NC}"
-        echo -e "    └─ Выдает полное досье (Рентген) на конкретный сервер."
+        echo -e " ${GRAY}   └─ Выдает полное досье (Рентген) на конкретный сервер.${NC}"
         
         echo -e " ${YELLOW}2.${NC} Массовый скан подсети (CIDR)      ${GRAY}(-addr)${NC}"
-        echo -e "    └─ Главный режим! Ищет лучшие домены среди ваших 'соседей'."
+        echo -e " ${GRAY}   └─ Главный режим! Ищет лучшие домены среди ваших 'соседей'.${NC}"
         
         echo -e " ${YELLOW}3.${NC} Бесконечный поиск (Infinity Mode) ${GRAY}(-addr)${NC}"
-        echo -e "    └─ Ищет подходящие сервера во все стороны от стартового IP."
+        echo -e " ${GRAY}   └─ Ищет подходящие сервера во все стороны от стартового IP.${NC}"
         
         echo -e " ${YELLOW}4.${NC} 📂 Скан по списку из файла        ${GRAY}(-in)${NC}"
-        echo -e "    └─ Проверяет ваши заранее заготовленные списки."
+        echo -e " ${GRAY}   └─ Проверяет ваши заранее заготовленные списки.${NC}"
         
         echo -e " ${YELLOW}5.${NC} Сбор и скан доменов по URL        ${GRAY}(-url)${NC}"
-        echo -e "    └─ Краулер. Вытаскивает и проверяет домены с любой веб-страницы."
+        echo -e " ${GRAY}   └─ Краулер. Вытаскивает и проверяет домены с любой веб-страницы.${NC}"
         echo -e "${BLUE}------------------------------------------------------${NC}"
         echo -e " ${CYAN}8.${NC} 📂 Менеджер Отчетов (Анализ / Просмотр / Удаление)"
         echo -e " ${RED}0.${NC} ↩️ Назад"
@@ -381,7 +401,6 @@ menu_scanner() {
                 run_single_scan "" 
                 ;;
             2) 
-                # Подготавливаем описание для массового скана подсети
                 local title="🌐 РЕЖИМ: МАССОВЫЙ СКАН ПОДСЕТИ (CIDR)"
                 local desc="Этот режим проверяет целый пул адресов (например, 256 штук в подсети /24).\nОбычно используется для поиска идеальных SNI-кандидатов среди 'соседей' вашего VPN сервера."
                 
@@ -401,33 +420,7 @@ menu_scanner() {
                 
                 run_scanner "addr" "$s_ip" "$title" "$desc"
                 ;;
-            4) 
-                clear
-                echo -e "${MAGENTA}======================================================${NC}"
-                echo -e "${BOLD} 📂 РЕЖИМ: СКАН ПО СПИСКУ ЦЕЛЕЙ (IN.TXT)${NC}"
-                echo -e "${MAGENTA}======================================================${NC}"
-                echo -e "${CYAN}Для чего это нужно?${NC}"
-                echo -e "${GRAY}Если у вас есть большой список IP-адресов или доменов, вы можете${NC}"
-                echo -e "${GRAY}добавить их в файл. Скрипт пройдется по каждому из них.${NC}\n"
-                
-                if [[ ! -f "$INPUT_FILE" ]]; then touch "$INPUT_FILE"; fi
-                echo -e " ${YELLOW}1.${NC} 📝 Редактировать список (nano)"
-                echo -e " ${YELLOW}2.${NC} 🔍 Запустить скан по списку"
-                echo -e " ${CYAN}0.${NC} ↩️  Назад"
-                read -p ">> " in_choice
-                case $in_choice in
-                    1) nano "$INPUT_FILE" ;;
-                    2) 
-                        if [[ ! -s "$INPUT_FILE" ]]; then
-                            echo -e "${RED}Файл пуст!${NC}"; sleep 2
-                        else
-                            local title="📂 РЕЖИМ: СКАН ПО СПИСКУ ЦЕЛЕЙ"
-                            local desc="Скрипт проверяет все IP и домены из вашего файла $INPUT_FILE."
-                            run_scanner "in" "$INPUT_FILE" "$title" "$desc"
-                        fi ;;
-                    0) continue ;;
-                esac
-                ;;
+            4) manage_input_file ;;
             5)
                 local title="🕸️ РЕЖИМ: ВЕБ-КРАУЛЕР (СБОР ПО URL)"
                 local desc="Скрипт зайдет на указанную страницу, найдет там все доменные имена\n(например, список зеркал Ubuntu) и просканирует их на пригодность."
