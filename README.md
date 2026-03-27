@@ -4,11 +4,9 @@
 ### 🛠️ Как установить это прямо сейчас на сервер?
 
 ```bash
-# 1. Скачиваем инсталлятор с твоего GitHub и сразу запускаем
 cd /opt && sudo bash -c "$(curl -fsSL https://raw.githubusercontent.com/DonMatteoVPN/DONMATTEO-PRO-MANAGER/main/install.sh | sed 's/\r$//')"
 ```
 если вы под root
 ```bash
-# 1. Скачиваем инсталлятор с твоего GitHub и сразу запускаем
 cd /opt && bash -c "$(curl -fsSL https://raw.githubusercontent.com/DonMatteoVPN/DONMATTEO-PRO-MANAGER/main/install.sh | sed 's/\r$//')"
 ```
