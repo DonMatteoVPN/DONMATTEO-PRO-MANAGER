@@ -26,7 +26,7 @@ sed -i 's/\r$//' /usr/local/bin/don # <--- АВТООЧИСТКА ВИНДОВС
 chmod +x /usr/local/bin/don
 
 echo -e "${CYAN}[*] Скачивание модулей...${NC}"
-MODULES=("m_ufw.sh" "m_ssh.sh" "m_f2b.sh" "m_tg.sh" "m_swap.sh" "m_cleaner.sh" "m_installer.sh" "m_update.sh" "m_scanner.sh")
+MODULES=("m_ufw.sh" "m_ssh.sh" "m_f2b.sh" "m_tg.sh" "m_swap.sh" "m_cleaner.sh" "m_installer.sh" "m_update.sh" "m_scanner.sh" "m_node.sh")
 
 for mod in "${MODULES[@]}"; do
     curl -sL "${REPO_URL}/modules/${mod}" -o "/opt/remnawave/modules/${mod}"
