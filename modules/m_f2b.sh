@@ -11,6 +11,21 @@
 install_fail2ban() {
     echo -e "${CYAN}[*] Настройка конфигурации Fail2Ban...${NC}"
     
+    # Гарантируем наличие файла лога ДО установки fail2ban
+    if [[ ! -f /var/log/auth.log ]]; then
+        echo -e "${YELLOW}[!] Файл /var/log/auth.log не найден. Создаю и устанавливаю rsyslog...${NC}"
+        touch /var/log/auth.log
+        chmod 640 /var/log/auth.log
+        chown root:adm /var/log/auth.log 2>/dev/null
+        
+        # Устанавливаем rsyslog СНАЧАЛА
+        smart_apt_install "rsyslog" || echo -e "${YELLOW}[!] Rsyslog не установлен, продолжаем...${NC}"
+        systemctl enable rsyslog >/dev/null 2>&1
+        systemctl restart rsyslog >/dev/null 2>&1
+        sleep 1
+    fi
+    
+    # Теперь устанавливаем fail2ban
     smart_apt_install "fail2ban" || { pause; return 1; }
     
     mkdir -p /var/log/nginx_custom
@@ -33,17 +48,6 @@ EOF
 
     local ACTIVE_SSH=$(grep -i "^Port" /etc/ssh/sshd_config | awk '{print $2}' | paste -sd "," -)
     [[ -z "$ACTIVE_SSH" ]] && ACTIVE_SSH="22"
-
-    # Гарантируем наличие файла лога (по просьбе пользователя)
-    if [[ ! -f /var/log/auth.log ]]; then
-        echo -e "${YELLOW}[!] Файл /var/log/auth.log не найден. Создаю и устанавливаю rsyslog...${NC}"
-        touch /var/log/auth.log
-        chmod 640 /var/log/auth.log
-        chown root:adm /var/log/auth.log 2>/dev/null
-        smart_apt_install "rsyslog"
-        systemctl enable rsyslog >/dev/null 2>&1
-        systemctl restart rsyslog >/dev/null 2>&1
-    fi
 
     cat << EOF > /etc/fail2ban/jail.local
 [DEFAULT]

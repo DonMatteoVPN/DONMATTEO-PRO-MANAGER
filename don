@@ -2,7 +2,7 @@
 set -u
 
 # --- ТЕКУЩАЯ ВЕРСИЯ СКРИПТА ---
-export APP_VERSION="02.105"
+export APP_VERSION="02.110"
 export REPO_RAW="https://raw.githubusercontent.com/DonMatteoVPN/DONMATTEO-PRO-MANAGER/main"
 
 # Глобальные флаги (Инициализация для set -u)
@@ -140,6 +140,19 @@ show_banner() {
 }
 
 check_updates() {
+    # Кэширование: проверяем только раз в 5 минут
+    local CACHE_FILE="/tmp/don_update_check.cache"
+    local CACHE_TIME=300  # 5 минут
+    
+    if [[ -f "$CACHE_FILE" ]]; then
+        local CACHE_AGE=$(( $(date +%s) - $(stat -c %Y "$CACHE_FILE" 2>/dev/null || stat -f %m "$CACHE_FILE" 2>/dev/null || echo 0) ))
+        if [[ $CACHE_AGE -lt $CACHE_TIME ]]; then
+            # Загружаем из кэша
+            source "$CACHE_FILE" 2>/dev/null
+            return 0
+        fi
+    fi
+    
     smart_dns_fix
     
     local TS=$(date +%s)
@@ -170,8 +183,23 @@ check_updates() {
             export HAS_UPDATE="yes"
             export LATEST_VER="$REMOTE_VERSION"
             export UPDATE_AVAILABLE="true"
+        else
+            export HAS_UPDATE="no"
+            export LATEST_VER=""
+            export UPDATE_AVAILABLE="false"
         fi
+    else
+        export HAS_UPDATE="no"
+        export LATEST_VER=""
+        export UPDATE_AVAILABLE="false"
     fi
+    
+    # Сохраняем результат в кэш
+    cat > "$CACHE_FILE" << EOF
+export HAS_UPDATE="$HAS_UPDATE"
+export LATEST_VER="$LATEST_VER"
+export UPDATE_AVAILABLE="$UPDATE_AVAILABLE"
+EOF
 }
 
 main_menu() {
@@ -180,8 +208,10 @@ main_menu() {
         echo -e "${GRAY}Все сообщения об ошибках и детальный вывод команд включены.${NC}\n"
     fi
 
+    # Проверка обновлений ОДИН раз при запуске меню
+    check_updates
+
     while true; do
-        check_updates 
         clear; show_banner
         if [[ "${HAS_UPDATE:-no}" == "yes" ]]; then
             echo -e "${YELLOW}${BOLD}🎉 ВНИМАНИЕ! ДОСТУПНО НОВОЕ ОБНОВЛЕНИЕ МЕНЕДЖЕРА! 🎉${NC}"
@@ -207,9 +237,15 @@ main_menu() {
         echo -e "${CYAN}======================================================${NC}"
         read -p "Выберите нужную категорию: " choice
         case $choice in
-            u|U) install_menu ;; r|R) menu_scanner ;; n|N) menu_node ;;
-            1) menu_ufw ;; 2) menu_ssh ;; 3) menu_fail2ban ;; 4) menu_trafficguard ;;
-            5) manage_swap ;; 6) menu_cleaner ;;
+            u|U) install_menu; check_updates ;; 
+            r|R) menu_scanner; check_updates ;; 
+            n|N) menu_node; check_updates ;;
+            1) menu_ufw; check_updates ;; 
+            2) menu_ssh; check_updates ;; 
+            3) menu_fail2ban; check_updates ;; 
+            4) menu_trafficguard; check_updates ;;
+            5) manage_swap; check_updates ;; 
+            6) menu_cleaner; check_updates ;;
             8) [[ "$HAS_UPDATE" == "yes" ]] && run_auto_update || echo -e "${RED}Обновлений нет.${NC}"; sleep 1 ;;
             0) echo -e "${GREEN}Удачной работы! 💪${NC}"; exit 0 ;;
             *) echo -e "${RED}Ошибка: Неверный выбор.${NC}"; sleep 1 ;;

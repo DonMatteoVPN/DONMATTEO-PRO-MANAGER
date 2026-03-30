@@ -244,21 +244,36 @@ smart_apt_install() {
 
     echo -ne "${CYAN}--> Установка ${pkg}... ${NC}"
     
-    # 1. Ждем снятия локов
+    # 1. Ждем снятия локов (УЛУЧШЕННАЯ ВЕРСИЯ)
     local lock_files=("/var/lib/dpkg/lock-frontend" "/var/lib/apt/lists/lock" "/var/cache/apt/archives/lock")
-    if command -v fuser >/dev/null 2>&1; then
-        for lock in "${lock_files[@]}"; do
-            if [[ -e "$lock" ]]; then
-                local count=0
-                while fuser "$lock" >/dev/null 2>&1 && [ $count -lt 30 ]; do
-                    echo -ne "\r${YELLOW}[!] Ждем APT ($lock)... $count/30${NC}"
-                    sleep 2
-                    ((count++))
-                done
-                [[ $count -eq 30 ]] && { fuser -k "$lock" >/dev/null 2>&1; rm -f "$lock"; }
+    local max_wait=60  # Увеличено до 60 секунд
+    
+    for lock in "${lock_files[@]}"; do
+        if [[ -e "$lock" ]]; then
+            local count=0
+            while fuser "$lock" >/dev/null 2>&1 && [ $count -lt $max_wait ]; do
+                echo -ne "\r${YELLOW}[!] Ждем освобождения APT ($(basename $lock))... $count/$max_wait${NC}"
+                sleep 2
+                ((count+=2))
+            done
+            
+            # Если все еще заблокировано - принудительно убиваем процесс
+            if [ $count -ge $max_wait ]; then
+                echo -ne "\r${RED}[!] Принудительное снятие блокировки...${NC}"
+                fuser -k "$lock" >/dev/null 2>&1
+                rm -f "$lock"
+                sleep 1
             fi
-        done
-    fi
+        fi
+    done
+    
+    # Убиваем зависшие процессы apt/dpkg
+    pkill -9 apt-get 2>/dev/null
+    pkill -9 dpkg 2>/dev/null
+    sleep 1
+    
+    # Исправляем сломанные пакеты
+    dpkg --configure -a >/dev/null 2>&1
 
     # 2. Параметры установки
     export DEBIAN_FRONTEND=noninteractive
