@@ -2,8 +2,9 @@
 # Модуль Remna-Node & Xray Assets
 
 # Пути
-export XRAY_ASSETS_DIR="${BASE_DIR}/xray/share"
+export XRAY_ASSETS_DIR="/opt/remnawave/xray/share"
 export UPDATE_SCRIPT="${BASE_DIR}/update_assets.sh"
+export NGINX_LOGS_DIR="/opt/remnawave/nginx_logs"
 
 # --- ФУНКЦИЯ СТАТУСА АВТООБНОВЛЕНИЯ ---
 get_node_autoupdate_status() {
@@ -23,9 +24,9 @@ view_node_logs() {
     case $log_type in
         "node_err") path="/var/log/remnanode/error.log" ;;
         "node_acc") path="/var/log/remnanode/access.log" ;;
-        "nginx_acc") path="${BASE_DIR}/nginx_logs/access.log" ;;
-        "nginx_err") path="${BASE_DIR}/nginx_logs/error.log" ;;
-        "nginx_stream") path="${BASE_DIR}/nginx_logs/stream_scanners.log" ;;
+        "nginx_acc") path="${NGINX_LOGS_DIR}/access.log" ;;
+        "nginx_err") path="${NGINX_LOGS_DIR}/error.log" ;;
+        "nginx_stream") path="${NGINX_LOGS_DIR}/stream_scanners.log" ;;
     esac
 
     clear
@@ -174,10 +175,7 @@ setup_assets_cron() {
     cat << 'EOF' > "$UPDATE_SCRIPT"
 #!/bin/bash
 # Автоматическое обновление ассетов TrafficGuard
-export BASE_DIR="/opt/remnawave/DONMATTEO-PRO-MANAGER"
-source "${BASE_DIR}/modules/m_core.sh" 2>/dev/null || true
-
-DIR="${BASE_DIR}/xray/share"
+DIR="/opt/remnawave/xray/share"
 mkdir -p "$DIR"
 
 # Удаляем папки если они есть (должны быть файлы)
@@ -243,11 +241,15 @@ show_node_instructions() {
    },${NC}\n"
 
     echo -e "${GREEN}${BOLD} [ШАГ 2] Настройка Docker (${YELLOW}docker-compose.yml${GREEN})${NC}"
-    echo -e " В блоке ${CYAN}remnanode -> volumes${NC} добавьте проброс баз и логов:\n"
+    echo -e " В блоке ${CYAN}volumes${NC} добавьте проброс баз и логов:\n"
+    echo -e " ${BOLD}Для контейнера remnanode:${NC}"
     echo -e "${CYAN} - /var/log/remnanode:/var/log/remnanode
- - ${BASE_DIR}/xray/share/zapret.dat:/usr/local/bin/zapret.dat
- - ${BASE_DIR}/xray/share/mygeoip.dat:/usr/local/share/xray/mygeoip.dat
- - ${BASE_DIR}/xray/share/mygeosite.dat:/usr/local/share/xray/mygeosite.dat${NC}\n"
+ - /opt/remnawave/xray/share/zapret.dat:/usr/local/bin/zapret.dat
+ - /opt/remnawave/xray/share/mygeoip.dat:/usr/local/share/xray/mygeoip.dat
+ - /opt/remnawave/xray/share/mygeosite.dat:/usr/local/share/xray/mygeosite.dat${NC}\n"
+    
+    echo -e " ${BOLD}Для контейнера remnawave-nginx:${NC}"
+    echo -e "${CYAN} - /opt/remnawave/nginx_logs:/var/log/nginx_custom${NC}\n"
 
     echo -e "${GREEN}${BOLD} [ШАГ 3] Использование в Routing (Примеры)${NC}"
     echo -e " Для ${YELLOW}Антизапрет${NC}:           \"ext:zapret.dat:zapret\""
@@ -256,7 +258,10 @@ show_node_instructions() {
     echo -e " Для ${YELLOW}Telegram${NC}:             \"ext:mygeosite.dat:TELEGRAM\" и \"ext:mygeoip.dat:TELEGRAM\"\n"
 
     echo -e "${BLUE}======================================================${NC}"
-    echo -e "${YELLOW} 💡 После настройки перезапустите контейнер:${NC}"
+    echo -e "${YELLOW} 💡 ПРОВЕРКА: Если файлы начали заполняться - всё ОК!${NC}"
+    echo -e "${CYAN}    /opt/remnawave/nginx_logs/access.log${NC}"
+    echo -e "${CYAN}    /opt/remnawave/nginx_logs/stream_scanners.log${NC}\n"
+    echo -e "${YELLOW} 🔄 После настройки перезапустите контейнеры:${NC}"
     echo -e "${CYAN}    docker compose down && docker compose up -d${NC}"
     echo -e "${BLUE}======================================================${NC}"
     pause

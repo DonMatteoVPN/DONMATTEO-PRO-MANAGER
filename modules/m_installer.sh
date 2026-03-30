@@ -24,7 +24,7 @@ show_prereq_instructions() {
     echo -e "${GREEN}${BOLD} [ШАГ 2] НАСТРОЙКА DOCKER (${YELLOW}docker-compose.yml${GREEN})${NC}"
     echo -e " Нужно вынести логи из контейнера наружу для Fail2Ban."
     echo -e " В блоке ${CYAN}volumes:${NC} для контейнера ${CYAN}remnawave-nginx${NC} добавьте:\n"
-    echo -e "${CYAN} - ${BASE_DIR}/nginx_logs:/var/log/nginx_custom${NC}\n"
+    echo -e "${CYAN} - /opt/remnawave/nginx_logs:/var/log/nginx_custom${NC}\n"
 
     echo -e "${GREEN}${BOLD} [ШАГ 3] НАСТРОЙКА NGINX (${YELLOW}nginx.conf${GREEN})${NC}"
     echo -e " Ваш конфиг должен состоять из двух главных частей:\n"
@@ -51,8 +51,8 @@ show_prereq_instructions() {
 
     echo -e "${BLUE}======================================================${NC}"
     echo -e "${YELLOW} 💡 ПРОВЕРКА: Если файлы начали заполняться - всё ОК!${NC}"
-    echo -e "${CYAN}    ${BASE_DIR}/nginx_logs/access.log${NC}"
-    echo -e "${CYAN}    ${BASE_DIR}/nginx_logs/stream_scanners.log${NC}\n"
+    echo -e "${CYAN}    /opt/remnawave/nginx_logs/access.log${NC}"
+    echo -e "${CYAN}    /opt/remnawave/nginx_logs/stream_scanners.log${NC}\n"
     echo -e "${YELLOW} 🔄 Команда для перезапуска:${NC}"
     echo -e "${CYAN}    docker compose down && docker compose up -d${NC}"
     echo -e "${BLUE}======================================================${NC}"
