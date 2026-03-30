@@ -5,6 +5,15 @@
 export XRAY_ASSETS_DIR="${BASE_DIR}/xray/share"
 export UPDATE_SCRIPT="${BASE_DIR}/update_assets.sh"
 
+# --- ФУНКЦИЯ СТАТУСА АВТООБНОВЛЕНИЯ ---
+get_node_autoupdate_status() {
+    if crontab -l 2>/dev/null | grep -q "update_assets.sh"; then
+        echo -e "${GREEN}[ВКЛЮЧЕНО]${NC}"
+    else
+        echo -e "${RED}[ВЫКЛЮЧЕНО]${NC}"
+    fi
+}
+
 # --- ФУНКЦИИ ЛОГОВ ---
 view_node_logs() {
     local log_type=$1
@@ -62,21 +71,34 @@ menu_logs() {
 install_assets() {
     echo -e "${CYAN}[*] Установка баз данных (GeoSite / GeoIP / Zapret)...${NC}"
     mkdir -p "$XRAY_ASSETS_DIR"
+    
+    # Проверяем и удаляем папки если они есть (должны быть файлы)
+    for item in "$XRAY_ASSETS_DIR/zapret.dat" "$XRAY_ASSETS_DIR/mygeosite.dat" "$XRAY_ASSETS_DIR/mygeoip.dat"; do
+        if [[ -d "$item" ]]; then
+            echo -e "${YELLOW}[!] Найдена папка вместо файла: $(basename $item). Удаляю...${NC}"
+            rm -rf "$item"
+        fi
+    done
+    
     cd "$XRAY_ASSETS_DIR" || return
 
     echo -e "${YELLOW}[1/3] Скачивание Zapret (Антизапрет РФ)...${NC}"
-    smart_curl "https://github.com/kutovoys/ru_gov_zapret/releases/latest/download/zapret.dat" "zapret.dat" 60
+    smart_curl "https://github.com/kutovoys/ru_gov_zapret/releases/latest/download/zapret.dat" "zapret.dat.tmp" 60
+    [[ -s "zapret.dat.tmp" ]] && mv "zapret.dat.tmp" "zapret.dat" || rm -f "zapret.dat.tmp"
     
     echo -e "${YELLOW}[2/3] Скачивание MyGeoSite (Разблокировки)...${NC}"
-    smart_curl "https://raw.githubusercontent.com/runetfreedom/russia-v2ray-rules-dat/release/geosite.dat" "mygeosite.dat" 60
+    smart_curl "https://raw.githubusercontent.com/runetfreedom/russia-v2ray-rules-dat/release/geosite.dat" "mygeosite.dat.tmp" 60
+    [[ -s "mygeosite.dat.tmp" ]] && mv "mygeosite.dat.tmp" "mygeosite.dat" || rm -f "mygeosite.dat.tmp"
     
     echo -e "${YELLOW}[3/3] Скачивание MyGeoIP (Регионы)...${NC}"
-    smart_curl "https://raw.githubusercontent.com/runetfreedom/russia-v2ray-rules-dat/release/geoip.dat" "mygeoip.dat" 60
+    smart_curl "https://raw.githubusercontent.com/runetfreedom/russia-v2ray-rules-dat/release/geoip.dat" "mygeoip.dat.tmp" 60
+    [[ -s "mygeoip.dat.tmp" ]] && mv "mygeoip.dat.tmp" "mygeoip.dat" || rm -f "mygeoip.dat.tmp"
 
-    if [[ -s "zapret.dat" && -s "mygeosite.dat" ]]; then
+    if [[ -s "zapret.dat" && -s "mygeosite.dat" && -s "mygeoip.dat" ]]; then
         echo -e "${GREEN}[+] Базы успешно установлены в $XRAY_ASSETS_DIR${NC}"
         if command -v docker &>/dev/null; then
-            docker restart remnanode >/dev/null 2>&1 || echo -e "${YELLOW}[!] Контейнер remnanode не запущен.${NC}"
+            echo -e "${CYAN}[*] Перезапуск ноды для применения изменений...${NC}"
+            docker restart remnanode >/dev/null 2>&1 && echo -e "${GREEN}[+] Нода перезапущена.${NC}" || echo -e "${YELLOW}[!] Контейнер remnanode не запущен.${NC}"
         fi
     else
         echo -e "${RED}[!] Ошибка при скачивании баз. Проверьте сеть.${NC}"
@@ -95,41 +117,59 @@ setup_assets_cron() {
     hour=${hour:-4}
     
     # Создаем скрипт обновления
-    cat << EOF > "$UPDATE_SCRIPT"
+    cat << 'EOF' > "$UPDATE_SCRIPT"
 #!/bin/bash
 # Автоматическое обновление ассетов TrafficGuard
-export BASE_DIR="${BASE_DIR}"
-source "\${BASE_DIR}/modules/m_core.sh"
+export BASE_DIR="/opt/remnawave/DONMATTEO-PRO-MANAGER"
+source "${BASE_DIR}/modules/m_core.sh" 2>/dev/null || true
 
-DIR="\${BASE_DIR}/xray/share"
-mkdir -p "\$DIR"
+DIR="${BASE_DIR}/xray/share"
+mkdir -p "$DIR"
 
-smart_curl "https://github.com/kutovoys/ru_gov_zapret/releases/latest/download/zapret.dat" "\$DIR/zapret.dat.new" 60
-smart_curl "https://raw.githubusercontent.com/runetfreedom/russia-v2ray-rules-dat/release/geosite.dat" "\$DIR/mygeosite.dat.new" 60
-smart_curl "https://raw.githubusercontent.com/runetfreedom/russia-v2ray-rules-dat/release/geoip.dat" "\$DIR/mygeoip.dat.new" 60
+# Удаляем папки если они есть (должны быть файлы)
+for item in "$DIR/zapret.dat" "$DIR/mygeosite.dat" "$DIR/mygeoip.dat"; do
+    [[ -d "$item" ]] && rm -rf "$item"
+done
 
-if [ -s "\$DIR/zapret.dat.new" ] && [ -s "\$DIR/mygeosite.dat.new" ]; then
-    mv "\$DIR/zapret.dat.new" "\$DIR/zapret.dat"
-    mv "\$DIR/mygeosite.dat.new" "\$DIR/mygeosite.dat"
-    mv "\$DIR/mygeoip.dat.new" "\$DIR/mygeoip.dat"
+# Скачиваем во временные файлы
+curl -fsSL --connect-timeout 10 --max-time 60 \
+    "https://github.com/kutovoys/ru_gov_zapret/releases/latest/download/zapret.dat" \
+    -o "$DIR/zapret.dat.new" 2>/dev/null
+
+curl -fsSL --connect-timeout 10 --max-time 60 \
+    "https://raw.githubusercontent.com/runetfreedom/russia-v2ray-rules-dat/release/geosite.dat" \
+    -o "$DIR/mygeosite.dat.new" 2>/dev/null
+
+curl -fsSL --connect-timeout 10 --max-time 60 \
+    "https://raw.githubusercontent.com/runetfreedom/russia-v2ray-rules-dat/release/geoip.dat" \
+    -o "$DIR/mygeoip.dat.new" 2>/dev/null
+
+# Проверяем и заменяем
+if [[ -s "$DIR/zapret.dat.new" && -s "$DIR/mygeosite.dat.new" && -s "$DIR/mygeoip.dat.new" ]]; then
+    mv "$DIR/zapret.dat.new" "$DIR/zapret.dat"
+    mv "$DIR/mygeosite.dat.new" "$DIR/mygeosite.dat"
+    mv "$DIR/mygeoip.dat.new" "$DIR/mygeoip.dat"
+    
+    # Перезапускаем ноду
     if command -v docker &>/dev/null; then
         docker restart remnanode >/dev/null 2>&1
     fi
-    echo "\$(date): Базы успешно обновлены" >> /var/log/xray_update.log
+    echo "$(date): Базы успешно обновлены" >> /var/log/xray_update.log
 else
-    rm -f \$DIR/*.new
-    echo "\$(date): Ошибка обновления" >> /var/log/xray_update.log
+    rm -f "$DIR"/*.new
+    echo "$(date): Ошибка обновления" >> /var/log/xray_update.log
 fi
 EOF
     chmod +x "$UPDATE_SCRIPT"
 
     # Удаляем старую задачу и добавляем новую
-    (crontab -l 2>/dev/null | grep -v "$UPDATE_SCRIPT") > /tmp/cron_tmp || true
+    (crontab -l 2>/dev/null | grep -v "update_assets.sh") > /tmp/cron_tmp || true
     echo "0 $hour * * $days $UPDATE_SCRIPT" >> /tmp/cron_tmp
     crontab /tmp/cron_tmp
     rm /tmp/cron_tmp
 
     echo -e "${GREEN}[+] Расписание установлено: день[$days] час[$hour]${NC}"
+    echo -e "${CYAN}[i] Скрипт: $UPDATE_SCRIPT${NC}"
     pause
 }
 
@@ -172,7 +212,7 @@ menu_node() {
         echo -e "${BLUE}======================================================${NC}"
         echo -e " ${YELLOW}1.${NC} 📋 Просмотр Логов (Нода / Nginx / Email)"
         echo -e " ${YELLOW}2.${NC} 📥 Установить базы (Zapret / GeoIP / GeoSite)"
-        echo -e " ${YELLOW}3.${NC} ⏰ Настроить автообновление баз (Cron)"
+        echo -e " ${YELLOW}3.${NC} ⏰ Настроить автообновление баз (Cron) $(get_node_autoupdate_status)"
         echo -e " ${YELLOW}4.${NC} 📖 Инструкция по подключению к панели"
         echo -e " ${CYAN}0.${NC} ↩️  Назад"
         read -p ">> " choice

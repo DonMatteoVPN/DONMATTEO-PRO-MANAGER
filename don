@@ -1,7 +1,7 @@
 #!/bin/bash
 
 # --- ТЕКУЩАЯ ВЕРСИЯ СКРИПТА ---
-export APP_VERSION="02.113"
+export APP_VERSION="02.114"
 export REPO_RAW="https://raw.githubusercontent.com/DonMatteoVPN/DONMATTEO-PRO-MANAGER/main"
 
 # Глобальные флаги (Инициализация)
@@ -136,6 +136,13 @@ get_ssh_status() {
     [[ -z "$ports" ]] && ports="22"
     echo -e "${status_text} ${GRAY}(Порты: ${ports})${NC}"
 }
+get_node_status() {
+    if crontab -l 2>/dev/null | grep -q "update_assets.sh"; then
+        echo -e "${GREEN}[Автообновление: ВКЛ]${NC}"
+    else
+        echo -e "${GRAY}[Автообновление: ВЫКЛ]${NC}"
+    fi
+}
 
 show_banner() {
     echo -e "${CYAN}======================================================${NC}"
@@ -244,7 +251,7 @@ main_menu() {
         fi
         echo -e " ${GREEN}U.${NC} 🛠️ УСТАНОВКА И ИНИЦИАЛИЗАЦИЯ ${BLUE}(Sysctl + UFW + Fail2Ban)${NC}"
         echo -e " ${GREEN}R.${NC} 🔍 Reality TLS Scanner"
-        echo -e " ${GREEN}N.${NC} 🛰️ Управление Нодой (Логи / Базы / Ассеты)"
+        echo -e " ${GREEN}N.${NC} 🛰️ Управление Нодой (Логи / Базы / Ассеты) $(get_node_status)"
         echo -e "${BLUE}------------------------------------------------------${NC}"
         echo -e " ${YELLOW}1.${NC} 🌐 Сетевой Экран (UFW)\e[40G${NC}$(get_ufw_status)"
         echo -e " ${YELLOW}2.${NC} 🔑 Управление SSH (Порты)\e[40G${NC}$(get_ssh_status)"

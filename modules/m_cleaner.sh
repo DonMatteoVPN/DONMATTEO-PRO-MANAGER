@@ -11,6 +11,15 @@ silent_cleaner_run() {
     if command -v snap &>/dev/null; then snap set system refresh.retain=2 2>/dev/null || true; fi
 }
 
+# Функция статуса автоочистки
+get_cleaner_status() {
+    if crontab -l 2>/dev/null | grep -q -F -- '--silent-clean'; then
+        echo -e "${GREEN}[ВКЛЮЧЕНО]${NC}"
+    else
+        echo -e "${RED}[ВЫКЛЮЧЕНО]${NC}"
+    fi
+}
+
 get_free_space() { df -k / | awk 'NR==2 {print $4}'; }
 
 human_readable() {
@@ -278,7 +287,7 @@ setup_cron() {
     clear; echo -e "${MAGENTA}=== ИНТЕРАКТИВНАЯ НАСТРОЙКА АВТООЧИСТКИ ===${NC}"
     echo -e "${GRAY}Скрипт будет сам запускать тихую очистку по вашему расписанию.${NC}\n"
 
-    local existing_job=$(crontab -l 2>/dev/null | grep '--silent-clean')
+    local existing_job=$(crontab -l 2>/dev/null | grep -F -- '--silent-clean')
     if [[ -n "$existing_job" ]]; then
         local e_min=$(echo "$existing_job" | awk '{print $1}')
         local e_hour=$(echo "$existing_job" | awk '{print $2}')
@@ -292,7 +301,7 @@ setup_cron() {
         echo -e " ${CYAN}0.${NC} ↩️  Назад"
         read -p ">> " action
         case $action in
-            2) crontab -l 2>/dev/null | grep -v -- '--silent-clean' | crontab -; echo -e "\n${GREEN}[+] Автоочистка успешно отключена!${NC}"; pause; return ;;
+            2) crontab -l 2>/dev/null | grep -v -F -- '--silent-clean' | crontab -; echo -e "\n${GREEN}[+] Автоочистка успешно отключена!${NC}"; pause; return ;;
             0) return ;;
             1) echo -e "\n${CYAN}--- Настройка нового расписания ---${NC}" ;;
             *) return ;;
@@ -315,7 +324,7 @@ setup_cron() {
 
     local job="$c_min $c_hour * * $c_day /usr/local/bin/don --silent-clean > /dev/null 2>&1"
     
-    crontab -l 2>/dev/null | grep -v -- '--silent-clean' | crontab -
+    crontab -l 2>/dev/null | grep -v -F -- '--silent-clean' | crontab -
     (crontab -l 2>/dev/null; echo "$job") | crontab -
     
     echo -e "\n${GREEN}[✓] Автоочистка успешно настроена!${NC}"
@@ -338,7 +347,7 @@ menu_cleaner() {
         echo -e " ${YELLOW}6.${NC} 🧩 Очистить старые Snap пакеты"
         echo -e "${BLUE}------------------------------------------------------${NC}"
         echo -e " ${CYAN}7.${NC} 🔍 Интерактивный Анализатор Диска"
-        echo -e " ${MAGENTA}8.${NC} ⏰ Настроить Автоочистку"
+        echo -e " ${MAGENTA}8.${NC} ⏰ Настроить Автоочистку $(get_cleaner_status)"
         echo -e " ${MAGENTA}9.${NC} 🔄 Умная Ротация логов"
         echo -e " ${CYAN}0.${NC} ↩️  Назад"
         read -p ">> " choice
