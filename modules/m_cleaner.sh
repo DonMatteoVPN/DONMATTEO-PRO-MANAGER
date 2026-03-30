@@ -322,8 +322,8 @@ lr_set_global_limits() {
         fi
     fi
     
-    # Возвращаем новые значения через echo
-    echo "$current_size $current_count"
+    # Возвращаем новые значения через специальный файл (не через stdout)
+    echo "$current_size $current_count" > /tmp/logrotate_limits.tmp
 }
 
 manage_logrotate() {
@@ -352,9 +352,14 @@ manage_logrotate() {
             2) lr_manual_add "$D_SIZE" "$D_COUNT" ;;
             3) lr_manage_rules ;;
             4) 
-                local new_limits=$(lr_set_global_limits "$D_SIZE" "$D_COUNT")
-                D_SIZE=$(echo "$new_limits" | awk '{print $1}')
-                D_COUNT=$(echo "$new_limits" | awk '{print $2}')
+                lr_set_global_limits "$D_SIZE" "$D_COUNT"
+                # Читаем новые значения из временного файла
+                if [[ -f /tmp/logrotate_limits.tmp ]]; then
+                    local new_limits=$(cat /tmp/logrotate_limits.tmp)
+                    D_SIZE=$(echo "$new_limits" | awk '{print $1}')
+                    D_COUNT=$(echo "$new_limits" | awk '{print $2}')
+                    rm -f /tmp/logrotate_limits.tmp
+                fi
                 pause
                 ;;
             5) echo -e "\n${CYAN}[*] Запуск принудительной ротации...${NC}"; logrotate -f /etc/logrotate.conf; echo -e "${GREEN}[+] Ротация выполнена! Проверьте архивы.${NC}"; pause ;;
@@ -413,6 +418,16 @@ setup_cron() {
     pause
 }
 
+# Функция статуса ротации логов (быстрая версия)
+get_logrotate_status() {
+    local rules_count=$(ls /etc/logrotate.d/don_* /etc/logrotate.d/remnawave-nginx 2>/dev/null | wc -l)
+    if [ "$rules_count" -gt 0 ]; then
+        echo -e "${GREEN}[Активно: ${rules_count} правил]${NC}"
+    else
+        echo -e "${RED}[НЕ НАСТРОЕНО]${NC}"
+    fi
+}
+
 menu_cleaner() {
     while true; do
         clear
@@ -430,7 +445,7 @@ menu_cleaner() {
         echo -e "${BLUE}------------------------------------------------------${NC}"
         echo -e " ${CYAN}7.${NC} 🔍 Интерактивный Анализатор Диска"
         echo -e " ${MAGENTA}8.${NC} ⏰ Настроить Автоочистку $(get_cleaner_status)"
-        echo -e " ${MAGENTA}9.${NC} 🔄 Умная Ротация логов"
+        echo -e " ${MAGENTA}9.${NC} 🔄 Умная Ротация логов $(get_logrotate_status)"
         echo -e " ${CYAN}0.${NC} ↩️  Назад"
         read -p ">> " choice
         case $choice in
