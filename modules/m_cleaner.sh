@@ -146,16 +146,26 @@ EOF
 
 lr_auto_scan() {
     local DEF_SIZE=$1; local DEF_COUNT=$2
-    clear; echo -e "${MAGENTA}=== СКАНИРОВАНИЕ ЛОГОВ (РАДАР) ===${NC}"
-    echo -e "${GRAY}Ищем папки с .log файлами, которые не управляются системой...${NC}\n"
+    clear; echo -e "${MAGENTA}=== ГЛУБОКОЕ СКАНИРОВАНИЕ ЛОГОВ (РАДАР) ===${NC}"
+    echo -e "${GRAY}Ищем ВСЕ .log файлы на сервере, которые не управляются системой...${NC}"
+    echo -e "${YELLOW}[!] Это может занять 1-2 минуты. Сканируем весь сервер...${NC}\n"
 
-    # Ищем все .log файлы, исключаем системные, вытаскиваем уникальные папки
-    mapfile -t LOG_DIRS < <(find "${BASE_DIR}" /var/log /root -type f -name "*.log" 2>/dev/null | grep -vE "/var/log/(journal|apt|installer|unattended-upgrades)" | xargs -r dirname | sort -u)
+    # ГЛУБОКОЕ СКАНИРОВАНИЕ: ищем по всему серверу, исключая только системные папки
+    echo -e "${CYAN}[*] Сканирование корневой файловой системы...${NC}"
+    mapfile -t LOG_DIRS < <(
+        find / -type f -name "*.log" 2>/dev/null | \
+        grep -vE "^/(proc|sys|dev|run|snap|boot|lost\+found)" | \
+        grep -vE "/var/log/(journal|apt|installer|unattended-upgrades|private)" | \
+        xargs -r dirname | \
+        sort -u
+    )
 
     if [ ${#LOG_DIRS[@]} -eq 0 ]; then
-        echo -e "${YELLOW}Диких логов не найдено.${NC}"; pause; return
+        echo -e "${GREEN}[✓] Диких логов не найдено! Сервер чист.${NC}"; pause; return
     fi
 
+    echo -e "${GREEN}[✓] Найдено ${#LOG_DIRS[@]} папок с логами${NC}\n"
+    
     local i=1; declare -a DIRS_ARRAY
     for dir in "${LOG_DIRS[@]}"; do
         # Проверяем, есть ли папка в любом конфиге logrotate
@@ -165,7 +175,8 @@ lr_auto_scan() {
             local STATUS="${RED}[ДИКИЕ ЛОГИ]${NC}"
         fi
         local SIZE=$(du -sh "$dir" 2>/dev/null | awk '{print $1}')
-        echo -e "  ${YELLOW}[$i]${NC} ${CYAN}$dir${NC} (Вес: $SIZE) $STATUS"
+        local FILE_COUNT=$(find "$dir" -maxdepth 1 -name "*.log" 2>/dev/null | wc -l)
+        echo -e "  ${YELLOW}[$i]${NC} ${CYAN}$dir${NC} (Вес: $SIZE, Файлов: $FILE_COUNT) $STATUS"
         DIRS_ARRAY[$i]=$dir
         ((i++))
     done
@@ -178,12 +189,15 @@ lr_auto_scan() {
     [[ "$c_scan" == "0" || -z "$c_scan" ]] && return
 
     if [[ "$c_scan" == "all" ]]; then
+        echo -e "\n${CYAN}[*] Применяем правила ко всем диким логам...${NC}"
+        local added=0
         for dir in "${DIRS_ARRAY[@]}"; do
             if ! grep -qr "$dir" /etc/logrotate.d/ 2>/dev/null; then
                 lr_create_rule "${dir}/*.log" "$DEF_SIZE" "$DEF_COUNT"
+                ((added++))
             fi
         done
-        echo -e "${GREEN}[+] Все 'дикие' логи успешно взяты под управление!${NC}"; pause; return
+        echo -e "${GREEN}[+] Успешно! Взято под управление: $added папок${NC}"; pause; return
     fi
 
     if [[ "$c_scan" =~ ^[0-9]+$ ]] && [ "$c_scan" -lt "$i" ] && [ "$c_scan" -gt 0 ]; then

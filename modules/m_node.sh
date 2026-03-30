@@ -110,11 +110,65 @@ install_assets() {
 setup_assets_cron() {
     clear
     echo -e "${MAGENTA}=== НАСТРОЙКА АВТООБНОВЛЕНИЯ БАЗ ===${NC}"
+    echo -e "${GRAY}Скрипт будет автоматически обновлять базы по вашему расписанию.${NC}\n"
+    
+    # Проверяем существующее расписание
+    local existing_job=$(crontab -l 2>/dev/null | grep -F -- 'update_assets.sh')
+    if [[ -n "$existing_job" ]]; then
+        local e_min=$(echo "$existing_job" | awk '{print $1}')
+        local e_hour=$(echo "$existing_job" | awk '{print $2}')
+        local e_dow=$(echo "$existing_job" | awk '{print $5}')
+        
+        # Преобразуем дни недели в читаемый формат
+        local days_text=""
+        case "$e_dow" in
+            "*") days_text="Каждый день" ;;
+            "0") days_text="Воскресенье" ;;
+            "1") days_text="Понедельник" ;;
+            "2") days_text="Вторник" ;;
+            "3") days_text="Среда" ;;
+            "4") days_text="Четверг" ;;
+            "5") days_text="Пятница" ;;
+            "6") days_text="Суббота" ;;
+            "1,3,5") days_text="Пн, Ср, Пт" ;;
+            "0,6") days_text="Сб, Вс" ;;
+            *) days_text="$e_dow" ;;
+        esac
+        
+        echo -e " ${GREEN}✅ Текущее активное расписание:${NC}"
+        echo -e "    Дни недели: ${CYAN}${days_text}${NC} | Время запуска: ${CYAN}$(printf "%02d:%02d" "$e_hour" "$e_min" 2>/dev/null || echo "$e_hour:$e_min")${NC}"
+        echo -e "${BLUE}------------------------------------------------------${NC}"
+        echo -e " ${YELLOW}1.${NC} 🔄 Изменить расписание"
+        echo -e " ${RED}2.${NC} 🗑️  Отключить и удалить автообновление"
+        echo -e " ${CYAN}0.${NC} ↩️  Назад"
+        read -p ">> " action
+        case $action in
+            2) 
+                crontab -l 2>/dev/null | grep -v -F -- 'update_assets.sh' | crontab -
+                echo -e "\n${GREEN}[+] Автообновление баз успешно отключено!${NC}"
+                pause
+                return
+                ;;
+            0) return ;;
+            1) echo -e "\n${CYAN}--- Настройка нового расписания ---${NC}" ;;
+            *) return ;;
+        esac
+    fi
+    
     echo -e "Выберите дни недели для обновления:"
-    echo -e " 1,3,5 - Пн, Ср, Пт | * - Каждый день | 0 - Вс"
+    echo -e " ${YELLOW}1,3,5${NC} - Пн, Ср, Пт | ${YELLOW}*${NC} - Каждый день | ${YELLOW}0${NC} - Вс | ${YELLOW}0,6${NC} - Сб, Вс"
     read -p ">> Ваш выбор: " days
-    read -p "В какой час запускать (0-23) [4]: " hour
+    [[ -z "$days" ]] && days="*"
+    
+    echo -e "\nВведите ЧАС запуска (от 0 до 23) [по умолчанию: 4]:"
+    read -p ">> " hour
     hour=${hour:-4}
+    [[ ! "$hour" =~ ^([0-1]?[0-9]|2[0-3])$ ]] && { echo -e "${YELLOW}Неверный ввод. Установлено: 04${NC}"; hour="4"; }
+    
+    echo -e "\nВведите МИНУТЫ (от 0 до 59) [по умолчанию: 0]:"
+    read -p ">> " min
+    min=${min:-0}
+    [[ ! "$min" =~ ^([0-5]?[0-9])$ ]] && { echo -e "${YELLOW}Неверный ввод. Установлено: 00${NC}"; min="0"; }
     
     # Создаем скрипт обновления
     cat << 'EOF' > "$UPDATE_SCRIPT"
@@ -163,12 +217,11 @@ EOF
     chmod +x "$UPDATE_SCRIPT"
 
     # Удаляем старую задачу и добавляем новую
-    (crontab -l 2>/dev/null | grep -v "update_assets.sh") > /tmp/cron_tmp || true
-    echo "0 $hour * * $days $UPDATE_SCRIPT" >> /tmp/cron_tmp
-    crontab /tmp/cron_tmp
-    rm /tmp/cron_tmp
+    crontab -l 2>/dev/null | grep -v -F -- 'update_assets.sh' | crontab -
+    (crontab -l 2>/dev/null; echo "$min $hour * * $days $UPDATE_SCRIPT") | crontab -
 
-    echo -e "${GREEN}[+] Расписание установлено: день[$days] час[$hour]${NC}"
+    echo -e "\n${GREEN}[✓] Автообновление баз успешно настроено!${NC}"
+    echo -e "${CYAN}[i] Расписание: Дни[$days] Время[$(printf "%02d:%02d" "$hour" "$min")]${NC}"
     echo -e "${CYAN}[i] Скрипт: $UPDATE_SCRIPT${NC}"
     pause
 }
