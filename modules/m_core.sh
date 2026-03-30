@@ -158,8 +158,11 @@ smart_curl() {
         fi
     fi
 
+    local std_out="/dev/null"
+    [[ "${DEBUG:-false}" == "true" ]] && std_out="/dev/stdout"
+
     # 1. Прямая попытка
-    if curl -fsSL --connect-timeout 3 --max-time "$max_time" "$url" -o "$output" >/dev/null 2>&1; then
+    if curl -fsSL --connect-timeout 3 --max-time "$max_time" "$url" -o "$output" >$std_out 2>&1; then
         return 0
     fi
 
@@ -260,7 +263,10 @@ smart_apt_install() {
     local opts="-y -qq -o Dpkg::Options::='--force-confdef' -o Dpkg::Options::='--force-confold'"
     
     # Попытка 1: Обычная
-    if apt-get install $opts "$pkg" >/dev/null 2>&1; then
+    local std_out="/dev/null"
+    [[ "$DEBUG" == "true" ]] && std_out="/dev/stdout"
+    
+    if apt-get install $opts "$pkg" >$std_out 2>&1; then
         echo -e "${GREEN}[УСПЕШНО]${NC}"; return 0
     fi
 

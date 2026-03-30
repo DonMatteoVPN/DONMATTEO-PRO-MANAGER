@@ -34,6 +34,17 @@ EOF
     local ACTIVE_SSH=$(grep -i "^Port" /etc/ssh/sshd_config | awk '{print $2}' | paste -sd "," -)
     [[ -z "$ACTIVE_SSH" ]] && ACTIVE_SSH="22"
 
+    # Гарантируем наличие файла лога (по просьбе пользователя)
+    if [[ ! -f /var/log/auth.log ]]; then
+        echo -e "${YELLOW}[!] Файл /var/log/auth.log не найден. Создаю и устанавливаю rsyslog...${NC}"
+        touch /var/log/auth.log
+        chmod 640 /var/log/auth.log
+        chown root:adm /var/log/auth.log 2>/dev/null
+        smart_apt_install "rsyslog"
+        systemctl enable rsyslog >/dev/null 2>&1
+        systemctl restart rsyslog >/dev/null 2>&1
+    fi
+
     cat << EOF > /etc/fail2ban/jail.local
 [DEFAULT]
 banaction = ufw
@@ -66,6 +77,7 @@ EOF
         echo -e "${GREEN}[+] Конфигурация Fail2Ban успешно применена.${NC}"
     else
         echo -e "${RED}[!] Ошибка при запуске. Проверьте синтаксис значений.${NC}"
+        [[ "$DEBUG" == "true" ]] && { echo -e "${CYAN}--- ЛОГ ОШИБОК FAIL2BAN ---${NC}"; journalctl -u fail2ban -n 20 --no-pager; }
     fi
 }
 

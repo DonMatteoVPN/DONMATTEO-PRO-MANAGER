@@ -10,6 +10,8 @@ export HAS_UPDATE="no"
 export LATEST_VER=""
 export UPDATE_AVAILABLE="false" 
 export FAST_MIRROR=""
+export DEBUG="false"
+for arg in "$@"; do if [[ "$arg" == "--debug" ]]; then export DEBUG="true"; fi; done
 export OS_TYPE="linux"
 [[ "$(uname)" == "Darwin" ]] && export OS_TYPE="macos"
 

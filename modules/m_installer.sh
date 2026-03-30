@@ -115,7 +115,9 @@ install_ufw_wrapper() {
     ufw allow "$CURRENT_SSH"/tcp comment 'Secure SSH' >/dev/null 2>&1
     ufw allow 443/tcp comment 'VLESS Reality/XHTTP' >/dev/null 2>&1
     ufw allow 6443/tcp comment 'VLESS Reality/XHTTP' >/dev/null 2>&1
-    ufw allow 2222/tcp comment 'Remna Panel' >/dev/null 2>&1
+    # Правило для Панели (Унифицированное под все IP)
+    ufw allow 2222 comment 'Remna Panel' >/dev/null 2>&1
+    [[ "$DEBUG" == "true" ]] && ufw status | grep 2222
     
     ufw --force enable >/dev/null 2>&1
     echo -e "${GREEN}[+] UFW успешно инициализирован.${NC}"
