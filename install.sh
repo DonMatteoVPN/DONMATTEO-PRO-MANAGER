@@ -1,28 +1,21 @@
 #!/bin/bash
 # ======================================================================
-# Установщик TRAFFICGUARD PRO MANAGER (Standardized v2)
+# Установщик TRAFFICGUARD PRO MANAGER (Standardized v3 - NO CACHE)
 # ======================================================================
 
 # Основные настройки
 BASE_DIR="/opt/remnawave/DONMATTEO-PRO-MANAGER"
 BIN_PATH="/usr/local/bin/don"
 REPO_RAW="https://raw.githubusercontent.com/DonMatteoVPN/DONMATTEO-PRO-MANAGER/main"
-MIRRORS=(
-    "https://mirror.ghproxy.com/https://raw.githubusercontent.com/DonMatteoVPN/DONMATTEO-PRO-MANAGER/main"
-    "https://gh-proxy.com/https://raw.githubusercontent.com/DonMatteoVPN/DONMATTEO-PRO-MANAGER/main"
-    "https://ghproxy.net/https://raw.githubusercontent.com/DonMatteoVPN/DONMATTEO-PRO-MANAGER/main"
-    "https://cdn.jsdelivr.net/gh/DonMatteoVPN/DONMATTEO-PRO-MANAGER@main"
-)
 
 RED='\033[0;31m'
 GREEN='\033[0;32m'
 CYAN='\033[0;36m'
 YELLOW='\033[1;33m'
 BOLD='\033[1m'
+MAGENTA='\033[0;35m'
+GRAY='\033[0;90m'
 NC='\033[0m'
-
-# Глобальные переменные для скорости
-export FAST_MIRROR=""
 
 # 0. ОЧИСТКА И МИГРАЦИЯ (Защита от конфликтов)
 cleanup_legacy() {
@@ -57,30 +50,6 @@ cleanup_legacy() {
     fi
 }
 
-# 0.1 СИСТЕМА ЗОНДИРОВАНИЯ (Speed Probe)
-find_fastest_mirror() {
-    echo -e "${CYAN}[*] Зондирование сети: Поиск лучшего канала...${NC}"
-    local test_file="don"
-    local TS=$(date +%s)
-    
-    # Список кандидатов (приоритет: CDN -> Прокси -> Напрямую)
-    local candidates=(
-        "https://cdn.jsdelivr.net/gh/DonMatteoVPN/DONMATTEO-PRO-MANAGER@main"
-        "https://mirror.ghproxy.com/https://raw.githubusercontent.com/DonMatteoVPN/DONMATTEO-PRO-MANAGER/main"
-        "https://ghproxy.net/https://raw.githubusercontent.com/DonMatteoVPN/DONMATTEO-PRO-MANAGER/main"
-        "https://raw.githubusercontent.com/DonMatteoVPN/DONMATTEO-PRO-MANAGER/main"
-    )
-
-    for base in "${candidates[@]}"; do
-        local url="${base}/${test_file}?t=${TS}"
-        if curl -fsSL --connect-timeout 1 --max-time 2 "$url" -o /dev/null >/dev/null 2>&1; then
-            export FAST_MIRROR="$base"
-            echo -e "${GREEN}[+] Выбран канал: ${FAST_MIRROR}${NC}"
-            return 0
-        fi
-    done
-}
-
 # Авто-исправление DNS
 smart_dns_fix() {
     if ! host raw.githubusercontent.com >/dev/null 2>&1 && ! host github.com >/dev/null 2>&1; then
@@ -88,57 +57,59 @@ smart_dns_fix() {
     fi
 }
 
-# Простейшая функция скачивания для инсталлера с АГРЕССИВНЫМ ОБХОДОМ КЭША
+# АГРЕССИВНАЯ функция скачивания с ПОЛНЫМ обходом кэша
 smart_download() {
     local path=$1
     local output=$2
     local TS=$(date +%s)
-    local RAND=$(( RANDOM % 9999 ))
     local NANO=$(date +%N 2>/dev/null || echo $RANDOM)
-    local BUSTER="nocache=${TS}&r=${RAND}&n=${NANO}"
+    local RAND=$(( RANDOM % 99999 ))
     
-    # 0. ПРИОРИТЕТ: GitHub Raw с полным обходом кэша
-    if curl -fsSL --connect-timeout 3 --max-time 15 \
+    echo -e "${CYAN}[*] Скачивание ${path} (обход всех кэшей)...${NC}"
+    
+    # 1. ПРИОРИТЕТ: GitHub API для получения SHA последнего коммита
+    local COMMIT_SHA=$(curl -fsSL --connect-timeout 3 --max-time 5 \
+        -H "Cache-Control: no-cache, no-store, must-revalidate" \
+        -H "Pragma: no-cache" \
+        "https://api.github.com/repos/DonMatteoVPN/DONMATTEO-PRO-MANAGER/commits/main" 2>/dev/null | \
+        grep -oP '"sha":\s*"\K[^"]+' | head -n1)
+    
+    # 2. Если получили SHA - качаем напрямую по коммиту (100% свежий файл)
+    if [[ -n "$COMMIT_SHA" && ${#COMMIT_SHA} -eq 40 ]]; then
+        echo -e "${GREEN}  └─ Используем коммит: ${COMMIT_SHA:0:7}${NC}"
+        local COMMIT_URL="https://raw.githubusercontent.com/DonMatteoVPN/DONMATTEO-PRO-MANAGER/${COMMIT_SHA}/${path}"
+        if curl -fsSL --connect-timeout 5 --max-time 20 \
+            -H "Cache-Control: no-cache, no-store, must-revalidate" \
+            -H "Pragma: no-cache" \
+            "$COMMIT_URL" -o "$output" >/dev/null 2>&1; then
+            return 0
+        fi
+    fi
+    
+    # 3. Fallback: GitHub Raw с агрессивными заголовками
+    if curl -fsSL --connect-timeout 5 --max-time 20 \
         -H "Cache-Control: no-cache, no-store, must-revalidate" \
         -H "Pragma: no-cache" \
         -H "Expires: 0" \
-        "${REPO_RAW}/${path}?${BUSTER}" -o "$output" >/dev/null 2>&1; then
+        "${REPO_RAW}/${path}?nocache=${TS}&r=${RAND}&n=${NANO}" -o "$output" >/dev/null 2>&1; then
         return 0
     fi
 
-    # 1. Если у нас есть FAST_MIRROR
-    if [[ -n "$FAST_MIRROR" ]]; then
-        local url="${FAST_MIRROR}/${path}?${BUSTER}"
-        if curl -fsSL --connect-timeout 2 --max-time 15 \
-            -H "Cache-Control: no-cache" \
-            "$url" -o "$output" >/dev/null 2>&1; then
-            return 0
-        fi
-    fi
-
-    # 2. Фикс DNS и повтор
+    # 4. Фикс DNS и повтор
     smart_dns_fix
-    if curl -fsSL --connect-timeout 3 --max-time 15 \
+    if curl -fsSL --connect-timeout 5 --max-time 20 \
         -H "Cache-Control: no-cache" \
-        "${REPO_RAW}/${path}?${BUSTER}" -o "$output" >/dev/null 2>&1; then
+        "${REPO_RAW}/${path}?t=${TS}" -o "$output" >/dev/null 2>&1; then
         return 0
     fi
 
-    # 3. Затем по зеркалам (быстрый перебор)
-    for mirror in "${MIRRORS[@]}"; do
-        local m_url="${mirror}/${path}?${BUSTER}"
-        if curl -fsSL --connect-timeout 2 --max-time 15 \
-            -H "Cache-Control: no-cache" \
-            "$m_url" -o "$output" >/dev/null 2>&1; then
-            return 0
-        fi
-    done
-
-    # 4. Режим "Отчаяние": без проверки SSL
+    # 5. Режим "Отчаяние": без проверки SSL
     if curl -fsSLk --connect-timeout 5 --max-time 20 \
-        "${REPO_RAW}/${path}?${BUSTER}" -o "$output" >/dev/null 2>&1; then
+        "${REPO_RAW}/${path}?t=${TS}" -o "$output" >/dev/null 2>&1; then
         return 0
     fi
+    
+    echo -e "${RED}[!] Ошибка скачивания ${path}${NC}"
     return 1
 }
 
@@ -161,9 +132,6 @@ if [[ -f "./don" && -d "./modules" ]]; then
     export IS_LOCAL="true"
     echo -e "${YELLOW}[!] Найдена локальная копия проекта. Используем локальные файлы для установки...${NC}"
 fi
-
-# Активация Speed Probe для быстрой установки
-find_fastest_mirror
 
 echo -e "${CYAN}[*] Синхронизация манифеста модулей...${NC}"
 if [[ "$IS_LOCAL" == "true" ]]; then

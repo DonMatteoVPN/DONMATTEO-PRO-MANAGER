@@ -1,20 +1,28 @@
 #!/bin/bash
 
 # --- ТЕКУЩАЯ ВЕРСИЯ СКРИПТА ---
-export APP_VERSION="02.111"
+export APP_VERSION="02.113"
 export REPO_RAW="https://raw.githubusercontent.com/DonMatteoVPN/DONMATTEO-PRO-MANAGER/main"
 
-# Глобальные флаги (Инициализация для set -u)
+# Глобальные флаги (Инициализация)
 export HAS_UPDATE="no"
 export LATEST_VER=""
 export UPDATE_AVAILABLE="false" 
 export FAST_MIRROR=""
 export DEBUG="false"
-for arg in "$@"; do if [[ "$arg" == "--debug" ]]; then export DEBUG="true"; fi; done
+
+# Проверяем аргументы ДО set -u
+for arg in "$@"; do 
+    if [[ "$arg" == "--debug" ]]; then 
+        export DEBUG="true"
+        set -x  # Включаем трассировку команд
+    fi
+done
+
 export OS_TYPE="linux"
 [[ "$(uname)" == "Darwin" ]] && export OS_TYPE="macos"
 
-# Включаем set -u только если НЕ debug режим (для отлова ошибок)
+# Включаем set -u только если НЕ debug режим
 if [[ "$DEBUG" != "true" ]]; then
     set -u
 fi

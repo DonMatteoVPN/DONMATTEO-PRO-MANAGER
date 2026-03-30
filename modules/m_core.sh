@@ -240,89 +240,87 @@ safe_curl() { smart_curl "$@"; }
 smart_apt_install() {
     local pkg="$1"
     # Если пакет уже есть — выходим
-    if dpkg -s "$pkg" >/dev/null 2>&1; then return 0; fi
+    if dpkg -s "$pkg" >/dev/null 2>&1; then 
+        echo -e "${GREEN}[УЖЕ УСТАНОВЛЕН]${NC}"
+        return 0
+    fi
 
     echo -ne "${CYAN}--> Установка ${pkg}... ${NC}"
     
     # 1. Ждем снятия локов (УЛУЧШЕННАЯ ВЕРСИЯ)
-    local lock_files=("/var/lib/dpkg/lock-frontend" "/var/lib/apt/lists/lock" "/var/cache/apt/archives/lock")
-    local max_wait=60  # Увеличено до 60 секунд
+    local lock_files=("/var/lib/dpkg/lock-frontend" "/var/lib/apt/lists/lock" "/var/cache/apt/archives/lock" "/var/lib/dpkg/lock")
+    local max_wait=90  # Увеличено до 90 секунд
+    
+    # Проверяем наличие fuser
+    if ! command -v fuser >/dev/null 2>&1; then
+        echo -ne "\r${YELLOW}[!] Установка psmisc для управления блокировками...${NC}"
+        apt-get install -y psmisc >/dev/null 2>&1 || true
+    fi
     
     for lock in "${lock_files[@]}"; do
         if [[ -e "$lock" ]]; then
             local count=0
             while fuser "$lock" >/dev/null 2>&1 && [ $count -lt $max_wait ]; do
-                echo -ne "\r${YELLOW}[!] Ждем освобождения APT ($(basename $lock))... $count/$max_wait${NC}"
-                sleep 2
-                ((count+=2))
+                echo -ne "\r${YELLOW}[!] Ждем освобождения APT ($(basename $lock))... $count/$max_wait сек${NC}     "
+                sleep 3
+                ((count+=3))
             done
             
             # Если все еще заблокировано - принудительно убиваем процесс
             if [ $count -ge $max_wait ]; then
-                echo -ne "\r${RED}[!] Принудительное снятие блокировки...${NC}"
-                fuser -k "$lock" >/dev/null 2>&1
-                rm -f "$lock"
-                sleep 1
+                echo -ne "\r${RED}[!] Принудительное снятие блокировки $(basename $lock)...${NC}     "
+                fuser -k "$lock" >/dev/null 2>&1 || true
+                rm -f "$lock" 2>/dev/null || true
+                sleep 2
             fi
         fi
     done
     
     # Убиваем зависшие процессы apt/dpkg
-    pkill -9 apt-get 2>/dev/null
-    pkill -9 dpkg 2>/dev/null
-    sleep 1
+    echo -ne "\r${YELLOW}[*] Очистка зависших процессов...${NC}     "
+    pkill -9 apt-get 2>/dev/null || true
+    pkill -9 apt 2>/dev/null || true
+    pkill -9 dpkg 2>/dev/null || true
+    sleep 2
     
     # Исправляем сломанные пакеты
-    dpkg --configure -a >/dev/null 2>&1
+    echo -ne "\r${YELLOW}[*] Исправление сломанных пакетов...${NC}     "
+    dpkg --configure -a >/dev/null 2>&1 || true
+    sleep 1
 
     # 2. Параметры установки
     export DEBIAN_FRONTEND=noninteractive
-    local opts="-y -qq -o Dpkg::Options::='--force-confdef' -o Dpkg::Options::='--force-confold'"
+    local opts="-y -o Dpkg::Options::='--force-confdef' -o Dpkg::Options::='--force-confold'"
     
     # Попытка 1: Обычная
     local std_out="/dev/null"
-    [[ "$DEBUG" == "true" ]] && std_out="/dev/stdout"
+    local std_err="2>&1"
+    if [[ "${DEBUG:-false}" == "true" ]]; then 
+        std_out="/dev/stdout"
+        std_err=""
+    fi
     
-    if apt-get install $opts "$pkg" >$std_out 2>&1; then
-        echo -e "${GREEN}[УСПЕШНО]${NC}"; return 0
+    echo -ne "\r${CYAN}--> Установка ${pkg}... (попытка 1/3)${NC}     "
+    if eval "apt-get install $opts \"$pkg\" >$std_out $std_err"; then
+        echo -e "\r${GREEN}[УСПЕШНО]${NC}                              "; return 0
     fi
 
     # Попытка 2: После update
-    echo -ne "\r${YELLOW}[*] Обновление списков пакетов...${NC}"
-    apt-get update -qq >/dev/null 2>&1
-    if apt-get install $opts "$pkg" >/dev/null 2>&1; then
-        echo -e "\r${GREEN}[УСПЕШНО] (после update)${NC}"; return 0
+    echo -ne "\r${YELLOW}[*] Обновление списков пакетов... (попытка 2/3)${NC}     "
+    apt-get update -qq >/dev/null 2>&1 || apt-get update >/dev/null 2>&1
+    if eval "apt-get install $opts \"$pkg\" >$std_out $std_err"; then
+        echo -e "\r${GREEN}[УСПЕШНО] (после update)${NC}                              "; return 0
     fi
 
-    # Попытка 3: Зеркала
-    local mirrors=("https://mirror.yandex.ru" "http://mirror.umd.edu" "http://debian.mirror.constant.com")
-    for mir in "${mirrors[@]}"; do
-        echo -ne "\r${YELLOW}[!] Пробуем через зеркало: $mir...${NC}"
-        [[ ! -f /etc/apt/sources.list.bak ]] && cp /etc/apt/sources.list /etc/apt/sources.list.bak
-        sed -i "s|http://.*.debian.org|$mir|g" /etc/apt/sources.list
-        sed -i "s|http://.*.ubuntu.com|$mir|g" /etc/apt/sources.list
-        apt-get update -qq >/dev/null 2>&1
-        if apt-get install $opts "$pkg" >/dev/null 2>&1; then
-            echo -e "\r${GREEN}[УСПЕШНО] (через $mir)${NC}"
-            mv /etc/apt/sources.list.bak /etc/apt/sources.list; return 0
-        fi
-        mv /etc/apt/sources.list.bak /etc/apt/sources.list
-    done
-
-    # Специальный случай для Grafana
-    if [[ "$pkg" == "grafana" ]]; then
-        echo -ne "\r${YELLOW}[!] Прямая установка Grafana .deb...${NC}"
-        local DEB="/tmp/grafana_latest.deb"
-        if smart_curl "https://dl.grafana.com/oss/release/grafana_11.5.0_amd64.deb" "$DEB" 60; then
-            dpkg -i "$DEB" >/dev/null 2>&1 || apt-get install -f -y -qq >/dev/null 2>&1
-            if command -v grafana-server >/dev/null; then
-                echo -e "\r${GREEN}[УСПЕШНО] Grafana установлена напрямую.${NC}"
-                rm -f "$DEB"; return 0
-            fi
-        fi
+    # Попытка 3: Fix broken
+    echo -ne "\r${YELLOW}[*] Исправление зависимостей... (попытка 3/3)${NC}     "
+    apt-get install -f -y >/dev/null 2>&1 || true
+    if eval "apt-get install $opts \"$pkg\" >$std_out $std_err"; then
+        echo -e "\r${GREEN}[УСПЕШНО] (после fix)${NC}                              "; return 0
     fi
 
-    echo -e "\r${RED}[!] СИСТЕМНАЯ ОШИБКА: Пакет ${pkg} не установлен.${NC}"
+    echo -e "\r${RED}[!] ОШИБКА: Пакет ${pkg} не установлен.${NC}                              "
+    [[ "${DEBUG:-false}" == "true" ]] && apt-cache policy "$pkg"
     return 1
 }
 
