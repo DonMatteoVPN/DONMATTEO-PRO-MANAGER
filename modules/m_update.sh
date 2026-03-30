@@ -8,17 +8,22 @@ run_auto_update() {
     echo -e "${MAGENTA}======================================================${NC}"
     
     smart_dns_fix
-    # Поиск самого быстрого канала
-    find_fastest_mirror
     
-    # Пытаемся получить COMMIT_SHA для точной загрузки (если GitHub API доступен)
-    local COMMIT_SHA=$(smart_curl_json "https://api.github.com/repos/DonMatteoVPN/DONMATTEO-PRO-MANAGER/commits/main" "sha")
+    # АГРЕССИВНЫЙ ОБХОД КЭША: Получаем последний коммит через API
+    echo -e "${CYAN}[*] Получение актуального хэша репозитория...${NC}"
+    local COMMIT_SHA=$(curl -fsSL --connect-timeout 3 --max-time 5 \
+        -H "Cache-Control: no-cache, no-store, must-revalidate" \
+        -H "Pragma: no-cache" \
+        -H "Expires: 0" \
+        "https://api.github.com/repos/DonMatteoVPN/DONMATTEO-PRO-MANAGER/commits/main" 2>/dev/null | \
+        grep -oP '"sha":\s*"\K[^"]+' | head -n1)
     
     local DL_BASE
     if [[ -n "$COMMIT_SHA" && ${#COMMIT_SHA} -eq 40 ]]; then
         DL_BASE="https://raw.githubusercontent.com/DonMatteoVPN/DONMATTEO-PRO-MANAGER/${COMMIT_SHA}"
-        echo -e "${GREEN}[+] Хэш репозитория: ${COMMIT_SHA:0:7}${NC}"
+        echo -e "${GREEN}[+] Хэш репозитория: ${COMMIT_SHA:0:7} (Гарантия свежести!)${NC}"
     else
+        # Fallback: используем main напрямую
         DL_BASE="${REPO_RAW}"
         echo -e "${YELLOW}[!] Используется канал загрузки: Main (Fallback)${NC}"
     fi
@@ -27,7 +32,12 @@ run_auto_update() {
     cp /usr/local/bin/don /usr/local/bin/don.bak 2>/dev/null || true
     
     echo -e "${CYAN}[*] Обновление ядра (don)...${NC}"
-    if smart_curl "${DL_BASE}/don" "/usr/local/bin/don"; then
+    # Используем прямой curl с обходом кэша
+    if curl -fsSL --connect-timeout 5 --max-time 15 \
+        -H "Cache-Control: no-cache, no-store, must-revalidate" \
+        -H "Pragma: no-cache" \
+        -H "Expires: 0" \
+        "${DL_BASE}/don" -o "/usr/local/bin/don" 2>/dev/null; then
         tr -d '\r' < /usr/local/bin/don > /usr/local/bin/don.tmp && mv /usr/local/bin/don.tmp /usr/local/bin/don
         chmod +x /usr/local/bin/don
         echo -e "${GREEN}[+] Ядро успешно обновлено.${NC}"
@@ -38,14 +48,18 @@ run_auto_update() {
     fi
 
     echo -e "${CYAN}[*] Обновление манифеста модулей...${NC}"
-    smart_curl "${DL_BASE}/modules.list" "$MOD_LIST_FILE"
+    curl -fsSL --connect-timeout 5 --max-time 10 \
+        -H "Cache-Control: no-cache" \
+        "${DL_BASE}/modules.list" -o "$MOD_LIST_FILE" 2>/dev/null
 
     echo -e "${CYAN}[*] Загрузка обновленных модулей...${NC}"
     if [[ -f "$MOD_LIST_FILE" ]]; then
         while read -r mod; do
             [[ -z "$mod" ]] && continue
             echo -e " └─ Синхронизация ${mod}..."
-            if smart_curl "${DL_BASE}/modules/${mod}" "${MOD_DIR}/${mod}"; then
+            if curl -fsSL --connect-timeout 5 --max-time 10 \
+                -H "Cache-Control: no-cache" \
+                "${DL_BASE}/modules/${mod}" -o "${MOD_DIR}/${mod}" 2>/dev/null; then
                 tr -d '\r' < "${MOD_DIR}/${mod}" > "${MOD_DIR}/${mod}.tmp" && mv "${MOD_DIR}/${mod}.tmp" "${MOD_DIR}/${mod}"
             else
                 echo -e "${RED}    [!] Ошибка при скачивании модуля ${mod}${NC}"
@@ -58,6 +72,9 @@ run_auto_update() {
     echo -e "${YELLOW}Скрипт будет перезапущен для применения изменений.${NC}"
     sleep 2
     
+    # Очищаем кэш проверки обновлений перед перезапуском
+    rm -f /tmp/don_update_check.cache 2>/dev/null
+    
     # Полностью заменяем текущий процесс новым скриптом
-    exec don
+    exec /usr/local/bin/don "$@"
 }

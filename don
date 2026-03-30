@@ -1,8 +1,7 @@
 #!/bin/bash
-set -u
 
 # --- ТЕКУЩАЯ ВЕРСИЯ СКРИПТА ---
-export APP_VERSION="02.110"
+export APP_VERSION="02.111"
 export REPO_RAW="https://raw.githubusercontent.com/DonMatteoVPN/DONMATTEO-PRO-MANAGER/main"
 
 # Глобальные флаги (Инициализация для set -u)
@@ -14,6 +13,11 @@ export DEBUG="false"
 for arg in "$@"; do if [[ "$arg" == "--debug" ]]; then export DEBUG="true"; fi; done
 export OS_TYPE="linux"
 [[ "$(uname)" == "Darwin" ]] && export OS_TYPE="macos"
+
+# Включаем set -u только если НЕ debug режим (для отлова ошибок)
+if [[ "$DEBUG" != "true" ]]; then
+    set -u
+fi
 
 # Глобальные цвета
 export RED='\033[0;31m'
@@ -140,37 +144,56 @@ show_banner() {
 }
 
 check_updates() {
-    # Кэширование: проверяем только раз в 5 минут
-    local CACHE_FILE="/tmp/don_update_check.cache"
-    local CACHE_TIME=300  # 5 минут
-    
-    if [[ -f "$CACHE_FILE" ]]; then
-        local CACHE_AGE=$(( $(date +%s) - $(stat -c %Y "$CACHE_FILE" 2>/dev/null || stat -f %m "$CACHE_FILE" 2>/dev/null || echo 0) ))
-        if [[ $CACHE_AGE -lt $CACHE_TIME ]]; then
-            # Загружаем из кэша
-            source "$CACHE_FILE" 2>/dev/null
-            return 0
-        fi
-    fi
-    
     smart_dns_fix
     
     local TS=$(date +%s)
     local RAND=$(( RANDOM % 9999 ))
-    local BUSTER="t=${TS}&s=${RAND}"
-    local TEMP_VER="/tmp/ver_check.txt"
+    local NANO=$(date +%N 2>/dev/null || echo $RANDOM)
+    local BUSTER="t=${TS}&r=${RAND}&n=${NANO}"
+    local TEMP_VER="/tmp/ver_check_${TS}.txt"
     local REMOTE_VERSION=""
     
-    # 1. СНАЧАЛА GitHub Raw (Самый быстрый пробой кэша)
-    local RAW_URL="https://raw.githubusercontent.com/DonMatteoVPN/DONMATTEO-PRO-MANAGER/main/don?${BUSTER}"
-    if curl -fsSL --connect-timeout 2 --max-time 5 "$RAW_URL" -o "$TEMP_VER" 2>/dev/null; then
-        REMOTE_VERSION=$(grep '^export APP_VERSION=' "$TEMP_VER" | head -n 1 | cut -d'"' -f2 | tr -d '\r\n ')
+    # 1. GitHub API (Получаем последний коммит для гарантии свежести)
+    local COMMIT_SHA=$(curl -fsSL --connect-timeout 2 --max-time 3 \
+        -H "Cache-Control: no-cache, no-store, must-revalidate" \
+        -H "Pragma: no-cache" \
+        -H "Expires: 0" \
+        "https://api.github.com/repos/DonMatteoVPN/DONMATTEO-PRO-MANAGER/commits/main" 2>/dev/null | \
+        grep -oP '"sha":\s*"\K[^"]+' | head -n1)
+    
+    # 2. Если получили SHA - качаем напрямую по коммиту (обход всех кэшей)
+    if [[ -n "$COMMIT_SHA" && ${#COMMIT_SHA} -eq 40 ]]; then
+        local COMMIT_URL="https://raw.githubusercontent.com/DonMatteoVPN/DONMATTEO-PRO-MANAGER/${COMMIT_SHA}/don"
+        if curl -fsSL --connect-timeout 2 --max-time 5 \
+            -H "Cache-Control: no-cache, no-store, must-revalidate" \
+            -H "Pragma: no-cache" \
+            "$COMMIT_URL" -o "$TEMP_VER" 2>/dev/null; then
+            REMOTE_VERSION=$(grep '^export APP_VERSION=' "$TEMP_VER" | head -n 1 | cut -d'"' -f2 | tr -d '\r\n ')
+        fi
+    fi
+    
+    # 3. Fallback: GitHub Raw с агрессивным обходом кэша
+    if [[ -z "$REMOTE_VERSION" ]]; then
+        local RAW_URL="https://raw.githubusercontent.com/DonMatteoVPN/DONMATTEO-PRO-MANAGER/main/don?${BUSTER}"
+        if curl -fsSL --connect-timeout 2 --max-time 5 \
+            -H "Cache-Control: no-cache, no-store, must-revalidate" \
+            -H "Pragma: no-cache" \
+            -H "Expires: 0" \
+            "$RAW_URL" -o "$TEMP_VER" 2>/dev/null; then
+            REMOTE_VERSION=$(grep '^export APP_VERSION=' "$TEMP_VER" | head -n 1 | cut -d'"' -f2 | tr -d '\r\n ')
+        fi
     fi
 
-    # 2. Если не вышло - пробуем jsDelivr (Fallback)
+    # 4. Последний Fallback: jsDelivr с purge
     if [[ -z "$REMOTE_VERSION" ]]; then
+        # Сначала пытаемся очистить кэш jsDelivr
+        curl -fsSL --connect-timeout 1 --max-time 2 \
+            "https://purge.jsdelivr.net/gh/DonMatteoVPN/DONMATTEO-PRO-MANAGER@main/don" >/dev/null 2>&1
+        
         local JSD_URL="https://cdn.jsdelivr.net/gh/DonMatteoVPN/DONMATTEO-PRO-MANAGER@main/don?${BUSTER}"
-        if curl -fsSL --connect-timeout 2 --max-time 5 "$JSD_URL" -o "$TEMP_VER" 2>/dev/null; then
+        if curl -fsSL --connect-timeout 2 --max-time 5 \
+            -H "Cache-Control: no-cache" \
+            "$JSD_URL" -o "$TEMP_VER" 2>/dev/null; then
             REMOTE_VERSION=$(grep '^export APP_VERSION=' "$TEMP_VER" | head -n 1 | cut -d'"' -f2 | tr -d '\r\n ')
         fi
     fi
@@ -178,7 +201,6 @@ check_updates() {
     rm -f "$TEMP_VER"
 
     if [[ -n "$REMOTE_VERSION" && "$REMOTE_VERSION" != "$APP_VERSION" ]]; then
-        # ЧЕСТНАЯ ПРОВЕРКА: Только если удаленная версия ВЫШЕ текущей
         if version_gt "$REMOTE_VERSION" "$APP_VERSION"; then
             export HAS_UPDATE="yes"
             export LATEST_VER="$REMOTE_VERSION"
@@ -193,13 +215,6 @@ check_updates() {
         export LATEST_VER=""
         export UPDATE_AVAILABLE="false"
     fi
-    
-    # Сохраняем результат в кэш
-    cat > "$CACHE_FILE" << EOF
-export HAS_UPDATE="$HAS_UPDATE"
-export LATEST_VER="$LATEST_VER"
-export UPDATE_AVAILABLE="$UPDATE_AVAILABLE"
-EOF
 }
 
 main_menu() {
@@ -246,11 +261,11 @@ main_menu() {
             4) menu_trafficguard; check_updates ;;
             5) manage_swap; check_updates ;; 
             6) menu_cleaner; check_updates ;;
-            8) [[ "$HAS_UPDATE" == "yes" ]] && run_auto_update || echo -e "${RED}Обновлений нет.${NC}"; sleep 1 ;;
+            8) [[ "$HAS_UPDATE" == "yes" ]] && run_auto_update "$@" || { echo -e "${RED}Обновлений нет.${NC}"; sleep 1; } ;;
             0) echo -e "${GREEN}Удачной работы! 💪${NC}"; exit 0 ;;
             *) echo -e "${RED}Ошибка: Неверный выбор.${NC}"; sleep 1 ;;
         esac
     done
 }
 
-main_menu
+main_menu "$@"

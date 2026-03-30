@@ -88,52 +88,55 @@ smart_dns_fix() {
     fi
 }
 
-# Простейшая функция скачивания для инсталлера
+# Простейшая функция скачивания для инсталлера с АГРЕССИВНЫМ ОБХОДОМ КЭША
 smart_download() {
     local path=$1
     local output=$2
     local TS=$(date +%s)
     local RAND=$(( RANDOM % 9999 ))
-    local BUSTER="t=${TS}&s=${RAND}"
+    local NANO=$(date +%N 2>/dev/null || echo $RANDOM)
+    local BUSTER="nocache=${TS}&r=${RAND}&n=${NANO}"
     
-    # 0. ПРИОРИТЕТ GITHUB (Для пробития кэша CDN)
-    if [[ "$path" == "don" || "$path" == "modules/m_core.sh" || "$path" == "modules.list" ]]; then
-        if curl -fsSL -H "Cache-Control: no-cache" --connect-timeout 2 --max-time 15 "${REPO_RAW}/${path}?${BUSTER}" -o "$output" >/dev/null 2>&1; then
-            return 0
-        fi
+    # 0. ПРИОРИТЕТ: GitHub Raw с полным обходом кэша
+    if curl -fsSL --connect-timeout 3 --max-time 15 \
+        -H "Cache-Control: no-cache, no-store, must-revalidate" \
+        -H "Pragma: no-cache" \
+        -H "Expires: 0" \
+        "${REPO_RAW}/${path}?${BUSTER}" -o "$output" >/dev/null 2>&1; then
+        return 0
     fi
 
     # 1. Если у нас есть FAST_MIRROR
     if [[ -n "$FAST_MIRROR" ]]; then
-        local url="${FAST_MIRROR}/${path}"
-        [[ "$FAST_MIRROR" == *"jsdelivr"* || "$FAST_MIRROR" == *"raw.githubusercontent"* ]] && url="${FAST_MIRROR}/${path}?${BUSTER}"
-        if curl -fsSL --connect-timeout 2 --max-time 15 "$url" -o "$output" >/dev/null 2>&1; then
+        local url="${FAST_MIRROR}/${path}?${BUSTER}"
+        if curl -fsSL --connect-timeout 2 --max-time 15 \
+            -H "Cache-Control: no-cache" \
+            "$url" -o "$output" >/dev/null 2>&1; then
             return 0
         fi
     fi
 
-    # 1. Сначала пытаемся напрямую (быстро)
-    if curl -fsSL --connect-timeout 2 --max-time 15 "${REPO_RAW}/${path}" -o "$output" >/dev/null 2>&1; then
-        return 0
-    fi
-
     # 2. Фикс DNS и повтор
     smart_dns_fix
-    if curl -fsSL --connect-timeout 2 --max-time 15 "${REPO_RAW}/${path}" -o "$output" >/dev/null 2>&1; then
+    if curl -fsSL --connect-timeout 3 --max-time 15 \
+        -H "Cache-Control: no-cache" \
+        "${REPO_RAW}/${path}?${BUSTER}" -o "$output" >/dev/null 2>&1; then
         return 0
     fi
 
     # 3. Затем по зеркалам (быстрый перебор)
     for mirror in "${MIRRORS[@]}"; do
-        local m_url="${mirror}/${path}"
-        [[ "$mirror" == *"jsdelivr"* || "$mirror" == *"raw.githubusercontent"* ]] && m_url="${mirror}/${path}?${BUSTER}"
-        if curl -fsSL --connect-timeout 2 --max-time 15 "$m_url" -o "$output" >/dev/null 2>&1; then
+        local m_url="${mirror}/${path}?${BUSTER}"
+        if curl -fsSL --connect-timeout 2 --max-time 15 \
+            -H "Cache-Control: no-cache" \
+            "$m_url" -o "$output" >/dev/null 2>&1; then
             return 0
         fi
     done
 
     # 4. Режим "Отчаяние": без проверки SSL
-    if curl -fsSLk --connect-timeout 5 --max-time 20 "${REPO_RAW}/${path}?${BUSTER}" -o "$output" >/dev/null 2>&1; then
+    if curl -fsSLk --connect-timeout 5 --max-time 20 \
+        "${REPO_RAW}/${path}?${BUSTER}" -o "$output" >/dev/null 2>&1; then
         return 0
     fi
     return 1
