@@ -247,15 +247,83 @@ lr_manage_rules() {
         
         if [ $i -eq 1 ]; then echo -e "  ${GRAY}(Правил не найдено)${NC}"; pause; return; fi
         
-        echo -e "\n Введите ${YELLOW}НОМЕР${NC} правила для УДАЛЕНИЯ, или ${CYAN}0${NC} для выхода."
+        echo -e "\n Введите ${YELLOW}НОМЕР${NC} правила для УДАЛЕНИЯ"
+        echo -e " Введите ${RED}all${NC} чтобы удалить ВСЕ правила"
+        echo -e " Или ${CYAN}0${NC} для выхода."
         read -p ">> " d_ch
         
         [[ "$d_ch" == "0" || -z "$d_ch" ]] && return
-        if [[ "$d_ch" =~ ^[0-9]+$ ]] && [ "$d_ch" -lt "$i" ] && [ "$d_ch" -gt 0 ]; then
+        
+        # Удаление всех правил
+        if [[ "$d_ch" == "all" ]]; then
+            echo -e "\n${RED}${BOLD}⚠️  ВНИМАНИЕ! Вы собираетесь удалить ВСЕ правила ротации!${NC}"
+            read -p "Подтвердите удаление (введите YES): " confirm
+            if [[ "$confirm" == "YES" ]]; then
+                for r_file in /etc/logrotate.d/don_* /etc/logrotate.d/remnawave-nginx; do
+                    [ -f "$r_file" ] && rm -f "$r_file"
+                done
+                echo -e "${GREEN}[+] Все правила удалены!${NC}"; sleep 2
+                return
+            else
+                echo -e "${YELLOW}[!] Отменено.${NC}"; sleep 1
+            fi
+        # Удаление одного правила
+        elif [[ "$d_ch" =~ ^[0-9]+$ ]] && [ "$d_ch" -lt "$i" ] && [ "$d_ch" -gt 0 ]; then
             rm -f "${RULE_FILES[$d_ch]}"
             echo -e "${GREEN}Правило удалено!${NC}"; sleep 1
         fi
     done
+}
+
+lr_set_global_limits() {
+    local current_size=$1
+    local current_count=$2
+    
+    clear
+    echo -e "${MAGENTA}=== ГЛОБАЛЬНЫЕ ЛИМИТЫ РОТАЦИИ ===${NC}"
+    echo -e "${GRAY}Настройте размер и количество архивов для новых правил.${NC}\n"
+    
+    echo -e " ${CYAN}Текущие настройки:${NC}"
+    echo -e "   Размер файла: ${GREEN}${current_size}${NC}"
+    echo -e "   Количество архивов: ${GREEN}${current_count} шт.${NC}\n"
+    
+    read -p "Введите новый размер (например, 100M или 1G) [Enter = без изменений]: " in_size
+    [[ -n "$in_size" ]] && current_size="$in_size"
+    
+    read -p "Введите количество хранимых архивов (например, 5) [Enter = без изменений]: " in_count
+    [[ "$in_count" =~ ^[0-9]+$ ]] && current_count="$in_count"
+    
+    echo -e "\n${GREEN}[+] Новые глобальные лимиты: ${current_size} / ${current_count} шт.${NC}"
+    
+    # Проверяем есть ли существующие правила
+    local existing_rules=$(ls /etc/logrotate.d/don_* /etc/logrotate.d/remnawave-nginx 2>/dev/null | wc -l)
+    
+    if [ "$existing_rules" -gt 0 ]; then
+        echo -e "\n${YELLOW}[?] Найдено ${existing_rules} существующих правил ротации.${NC}"
+        echo -e "${YELLOW}    Применить новые лимиты ко ВСЕМ существующим правилам?${NC}"
+        read -p "    (y/n): " apply_to_all
+        
+        if [[ "$apply_to_all" =~ ^[yYдД]$ ]]; then
+            echo -e "\n${CYAN}[*] Применяем новые лимиты ко всем правилам...${NC}"
+            local updated=0
+            
+            for r_file in /etc/logrotate.d/don_* /etc/logrotate.d/remnawave-nginx; do
+                if [ -f "$r_file" ]; then
+                    # Обновляем size и rotate в файле
+                    sed -i "s/size .*/size $current_size/" "$r_file"
+                    sed -i "s/rotate .*/rotate $current_count/" "$r_file"
+                    ((updated++))
+                fi
+            done
+            
+            echo -e "${GREEN}[+] Обновлено правил: $updated${NC}"
+        else
+            echo -e "${CYAN}[i] Новые лимиты будут применяться только к новым правилам.${NC}"
+        fi
+    fi
+    
+    # Возвращаем новые значения через echo
+    echo "$current_size $current_count"
 }
 
 manage_logrotate() {
@@ -284,11 +352,11 @@ manage_logrotate() {
             2) lr_manual_add "$D_SIZE" "$D_COUNT" ;;
             3) lr_manage_rules ;;
             4) 
-               read -p "Введите новый размер (например, 100M или 1G): " in_size
-               [[ -n "$in_size" ]] && D_SIZE="$in_size"
-               read -p "Введите количество хранимых архивов (например, 5): " in_count
-               [[ "$in_count" =~ ^[0-9]+$ ]] && D_COUNT="$in_count"
-               echo -e "${GREEN}Глобальные лимиты обновлены!${NC}"; sleep 1 ;;
+                local new_limits=$(lr_set_global_limits "$D_SIZE" "$D_COUNT")
+                D_SIZE=$(echo "$new_limits" | awk '{print $1}')
+                D_COUNT=$(echo "$new_limits" | awk '{print $2}')
+                pause
+                ;;
             5) echo -e "\n${CYAN}[*] Запуск принудительной ротации...${NC}"; logrotate -f /etc/logrotate.conf; echo -e "${GREEN}[+] Ротация выполнена! Проверьте архивы.${NC}"; pause ;;
             0) return ;;
         esac
