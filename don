@@ -4,8 +4,12 @@ set -u
 # --- ТЕКУЩАЯ ВЕРСИЯ СКРИПТА ---
 export APP_VERSION="02.007"
 export REPO_RAW="https://raw.githubusercontent.com/DonMatteoVPN/DONMATTEO-PRO-MANAGER/main"
+
+# Глобальные флаги (Инициализация для set -u)
 export HAS_UPDATE="no"
-export UPDATE_AVAILABLE="false" # Compatibility
+export LATEST_VER=""
+export UPDATE_AVAILABLE="false" 
+export FAST_MIRROR=""
 
 # Глобальные цвета
 export RED='\033[0;31m'
@@ -163,9 +167,9 @@ main_menu() {
     while true; do
         check_updates 
         clear; show_banner
-        if [[ "$HAS_UPDATE" == "yes" ]]; then
+        if [[ "${HAS_UPDATE:-no}" == "yes" ]]; then
             echo -e "${YELLOW}${BOLD}🎉 ВНИМАНИЕ! ДОСТУПНО НОВОЕ ОБНОВЛЕНИЕ МЕНЕДЖЕРА! 🎉${NC}"
-            echo -e "${GREEN}✨ Вышла новая версия: v${LATEST_VER}${NC} (У вас v${APP_VERSION})"
+            echo -e "${GREEN}✨ Вышла новая версия: v${LATEST_VER:-?}${NC} (У вас v${APP_VERSION})"
             echo -e "${CYAN}👉 Нажмите [8], чтобы обновиться в один клик!${NC}"
             echo -e "${YELLOW}======================================================${NC}"
         fi
@@ -179,9 +183,9 @@ main_menu() {
         echo -e " ${YELLOW}4.${NC} 🚦 TrafficGuard PRO\e[40G${NC}$(get_tg_status)"
         echo -e " ${YELLOW}5.${NC} ⚙️ Настройки (Swap / Память)\e[40G${NC}$(get_swap_status)"
         echo -e " ${YELLOW}6.${NC} 🧹 Очистка Сервера (Место на диске)"
-        if [[ "$HAS_UPDATE" == "yes" ]]; then
+        if [[ "${HAS_UPDATE:-no}" == "yes" ]]; then
             echo -e "${BLUE}------------------------------------------------------${NC}"
-            echo -e " ${GREEN}8.${NC} 🎁 ${BOLD}СКАЧАТЬ ОБНОВЛЕНИЕ ДО v${LATEST_VER}${NC}"
+            echo -e " ${GREEN}8.${NC} 🎁 ${BOLD}СКАЧАТЬ ОБНОВЛЕНИЕ ДО v${LATEST_VER:-?}${NC}"
         fi
         echo -e " ${RED}0.${NC} ❌ Выход                             "
         echo -e "${CYAN}======================================================${NC}"

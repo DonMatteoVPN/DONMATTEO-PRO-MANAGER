@@ -24,7 +24,40 @@ NC='\033[0m'
 # Глобальные переменные для скорости
 export FAST_MIRROR=""
 
-# 0. СИСТЕМА ЗОНДИРОВАНИЯ (Speed Probe)
+# 0. ОЧИСТКА И МИГРАЦИЯ (Защита от конфликтов)
+cleanup_legacy() {
+    echo -e "${CYAN}[*] Глубокая очистка системы от старых версий...${NC}"
+    
+    # 1. Удаляем призрачные бинарники
+    if [[ -f "/usr/local/bin/don" ]]; then
+        rm -f "/usr/local/bin/don"
+    fi
+
+    # 2. Обработка основной папки проекта
+    if [[ -d "$BASE_DIR" ]]; then
+        # Если есть конфиги - спасаем их!
+        if [[ -d "${BASE_DIR}/etc" ]]; then
+            echo -e "${YELLOW} [!] Найдены существующие конфиги. Создаем временный бекап...${NC}"
+            cp -r "${BASE_DIR}/etc" "/tmp/don_conf_bak"
+        fi
+        
+        # Полная зачистка (чтобы не было старых битых модулей)
+        echo -e "${GRAY}  --> Удаление старых файлов проекта...${NC}"
+        rm -rf "$BASE_DIR"
+    fi
+    
+    # 3. Восстановление структуры
+    mkdir -p "${BASE_DIR}/modules"
+    mkdir -p "${BASE_DIR}/etc"
+    
+    if [[ -d "/tmp/don_conf_bak" ]]; then
+        cp -r "/tmp/don_conf_bak/"* "${BASE_DIR}/etc/" 2>/dev/null
+        rm -rf "/tmp/don_conf_bak"
+        echo -e "${GREEN} [+] Конфигурации успешно восстановлены.${NC}"
+    fi
+}
+
+# 0.1 СИСТЕМА ЗОНДИРОВАНИЯ (Speed Probe)
 find_fastest_mirror() {
     echo -e "${CYAN}[*] Зондирование сети: Поиск лучшего канала...${NC}"
     local test_file="don"
@@ -105,9 +138,7 @@ echo -e "${BOLD}${MAGENTA} 🚀 УСТАНОВКА / ОБНОВЛЕНИЕ TRAFFI
 echo -e "${CYAN}================================================================${NC}"
 
 echo -e "${CYAN}[*] Подготовка структуры директорий...${NC}"
-mkdir -p "${BASE_DIR}/modules"
-mkdir -p "${BASE_DIR}/etc"
-mkdir -p "$BASE_DIR"
+cleanup_legacy
 
 # Активация Speed Probe для быстрой установки
 find_fastest_mirror
