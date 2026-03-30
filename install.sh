@@ -92,7 +92,7 @@ smart_dns_fix() {
 smart_download() {
     local path=$1
     local output=$2
-    local TS=$(date +%s)
+    local TS=$(date +%s%N 2>/dev/null || date +%s)
     local RAND=$(( RANDOM % 9999 ))
     local BUSTER="t=${TS}&s=${RAND}"
     
@@ -211,9 +211,13 @@ else
     echo -e "${RED}[FAIL]${NC}"
 fi
 
+# 5. ИТОГОВАЯ ПРОВЕРКА
+installed_ver=$(grep "APP_VERSION=" "$BIN_PATH" | cut -d'"' -f2 || echo "unknown")
+chmod +x "$BIN_PATH"
+
 clear
 echo -e "${CYAN}================================================================${NC}"
-echo -e "${GREEN}${BOLD} 🚀 TRAFFICGUARD PRO УСПЕШНО УСТАНОВЛЕН!${NC}"
+echo -e "${GREEN}${BOLD} 🚀 TRAFFICGUARD PRO УСПЕШНО УСТАНОВЛЕН (v${installed_ver})!${NC}"
 echo -e "${CYAN}================================================================${NC}"
 echo -e "${YELLOW} Система адаптирована под любые регионы и блокировки.${NC}"
 echo -e "${YELLOW} Все конфигурации перенесены в ${BASE_DIR}/etc/${NC}\n"
