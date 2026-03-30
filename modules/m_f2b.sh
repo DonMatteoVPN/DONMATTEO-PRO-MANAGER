@@ -1,29 +1,22 @@
 #!/bin/bash
+# Модуль Fail2Ban (Защита от брутфорса и сканеров)
 
-# Пути к файлам настроек Fail2Ban
-export F2B_RETRY_FILE="/opt/remnawave/f2b_maxretry.txt"
-export F2B_FIND_FILE="/opt/remnawave/f2b_findtime.txt"
-export F2B_BAN_FILE="/opt/remnawave/f2b_bantime.txt"
-
-# Инициализация дефолтных значений, если файлы пусты
+# Инициализация дефолтных значений в новых путях, если файлы отсутствуют
 [[ ! -f "$F2B_RETRY_FILE" ]] && echo "3" > "$F2B_RETRY_FILE"
 [[ ! -f "$F2B_FIND_FILE" ]] && echo "600" > "$F2B_FIND_FILE"
 [[ ! -f "$F2B_BAN_FILE" ]] && echo "24h" > "$F2B_BAN_FILE"
-
-get_f2b_status() {
-    if systemctl is-active --quiet fail2ban; then echo -e "${GREEN}[РАБОТАЕТ]${NC}"; else echo -e "${RED}[НЕ УСТАНОВЛЕНО/ВЫКЛЮЧЕН]${NC}"; fi
-}
+[[ ! -f "$WHITELIST_FILE" ]] && touch "$WHITELIST_FILE"
 
 # --- ГЛАВНАЯ ФУНКЦИЯ УСТАНОВКИ И ОБНОВЛЕНИЯ КОНФИГА ---
 install_fail2ban() {
     echo -e "${CYAN}[*] Настройка конфигурации Fail2Ban...${NC}"
-    apt-get update -qq && apt-get install fail2ban -y -qq
+    
+    smart_apt_install "fail2ban" || { pause; return 1; }
     
     mkdir -p /var/log/nginx_custom
     touch /var/log/nginx_custom/access.log
     touch /var/log/nginx_custom/stream_scanners.log
 
-    touch "$WHITELIST_FILE"
     local WL_IPS=$(awk '{print $1}' "$WHITELIST_FILE" | grep -E '^[0-9]' | tr '\n' ' ')
     
     # Загружаем текущие значения из файлов
@@ -138,8 +131,6 @@ show_f2b_help() {
     pause
 }
 
-# --- ОСТАЛЬНЫЕ ФУНКЦИИ (СТАТИСТИКА, РАЗБАН, WHITELIST) ---
-
 show_f2b_stats() {
     clear; echo -e "${MAGENTA}=== ПОДРОБНАЯ СТАТИСТИКА ЗАЩИТЫ FAIL2BAN ===${NC}\n"
     for jail in sshd nginx-scanners; do
@@ -217,7 +208,6 @@ f2b_whitelist() {
     done
 }
 
-# --- ГЛАВНОЕ МЕНЮ МОДУЛЯ ---
 menu_fail2ban() {
     while true; do
         clear

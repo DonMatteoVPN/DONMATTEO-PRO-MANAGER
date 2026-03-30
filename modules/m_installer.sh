@@ -22,7 +22,7 @@ show_prereq_instructions() {
     echo -e "${GREEN}${BOLD} [ШАГ 2] НАСТРОЙКА DOCKER (${YELLOW}docker-compose.yml${GREEN})${NC}"
     echo -e " Нужно вынести логи из контейнера наружу для Fail2Ban."
     echo -e " В блоке ${CYAN}volumes:${NC} для контейнера ${CYAN}remnawave-nginx${NC} добавьте:"
-    echo -e " ${GREEN}- /opt/remnawave/nginx_logs:/var/log/nginx_custom${NC}\n"
+    echo -e " ${GREEN}- ${BASE_DIR}/nginx_logs:/var/log/nginx_custom${NC}\n"
 
     echo -e "${GREEN}${BOLD} [ШАГ 3] НАСТРОЙКА NGINX (${YELLOW}nginx.conf${GREEN})${NC}"
     echo -e " Ваш конфиг должен состоять из двух главных частей:\n"
@@ -48,14 +48,13 @@ show_prereq_instructions() {
     echo -e " ${GREEN}error_log  /var/log/nginx_custom/error.log;${NC}\n"
 
     echo -e "${MAGENTA}======================================================================${NC}"
-    echo -e "${YELLOW} ПРОВЕРКА: Если файлы /var/log/nginx_custom/access.log и stream_scanners.log${NC}"
+    echo -e "${YELLOW} ПРОВЕРКА: Если файлы ${BASE_DIR}/nginx_logs/access.log и stream_scanners.log${NC}"
     echo -e "${YELLOW} начали заполняться - значит всё настроено ВЕРНО!${NC}"
     echo -e "${CYAN} Команда для перезапуска: docker compose down && docker compose up -d${NC}"
     echo -e "${MAGENTA}======================================================================${NC}"
     pause
 }
 
-# --- ДОБАВЛЕННАЯ ФУНКЦИЯ (Которой не хватало) ---
 install_sysctl() {
     echo -e "\n${CYAN}[*] Настройка параметров ядра (Sysctl)...${NC}"
     cat << 'EOF' > /etc/sysctl.d/99-anti-ddos.conf
@@ -72,16 +71,18 @@ EOF
     echo -e "${GREEN}[+] Защита ядра активирована.${NC}"
 }
 
-install_ufw() {
+install_ufw_wrapper() {
     echo -e "\n${CYAN}[*] Первичная настройка UFW (Сброс до заводских настроек)...${NC}"
-    apt-get install ufw -y >/dev/null 2>&1
+    
+    # Используем стандартизированную установку
+    smart_apt_install "ufw" || { echo -e "${RED}[!] Не удалось установить UFW.${NC}"; pause; return 1; }
     
     local CURRENT_SSH=$(grep -i "^Port " /etc/ssh/sshd_config | awk '{print $2}' | head -n 1)
     [[ -z "$CURRENT_SSH" ]] && CURRENT_SSH="22"
     echo -e "${GRAY}Обнаружен активный SSH порт: ${YELLOW}$CURRENT_SSH${NC}"
 
     ufw --force reset >/dev/null 2>&1
-    cp /etc/ufw/before.rules /etc/ufw/before.rules.bak
+    cp /etc/ufw/before.rules /etc/ufw/before.rules.bak 2>/dev/null
     sed -i '/# --- НАЧАЛО: Правила защиты от DDoS/,/# --- КОНЕЦ: Направляем трафик/d' /etc/ufw/before.rules
 
     sed -i '/\*filter/a \
@@ -117,14 +118,14 @@ install_ufw() {
     ufw allow 2222/tcp comment 'Remna Panel' >/dev/null 2>&1
     
     ufw --force enable >/dev/null 2>&1
-    echo -e "${GREEN}[+] UFW успешно инициализирован. Сброс к лимитам 150/80 выполнен.${NC}"
+    echo -e "${GREEN}[+] UFW успешно инициализирован.${NC}"
     pause
 }
 
 install_all() {
     install_sysctl
-    install_ufw
-    # Вызываем функцию из модуля m_f2b.sh
+    install_ufw_wrapper || return 1 
+    
     if declare -f install_fail2ban > /dev/null; then
         install_fail2ban
     else
@@ -154,7 +155,7 @@ install_menu() {
         case $choice in
             1) install_all ;; 
             2) install_sysctl; pause ;; 
-            3) install_ufw ;; 
+            3) install_ufw_wrapper ;; 
             4) install_fail2ban ;; 
             5) show_prereq_instructions ;; 
             0) return ;;

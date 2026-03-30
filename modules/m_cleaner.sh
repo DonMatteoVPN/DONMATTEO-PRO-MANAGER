@@ -1,4 +1,5 @@
 #!/bin/bash
+# Модуль Очистки сервера
 
 silent_cleaner_run() {
     journalctl --vacuum-time=3d >/dev/null 2>&1 || true
@@ -86,18 +87,18 @@ analyze_disk() {
         echo -e "${GRAY}Выберите директорию, в которую хотите провалиться:${NC}\n"
         local S_LOG=$(du -sh /var/log 2>/dev/null | awk '{print $1}'); local S_DOCKER=$(du -sh /var/lib/docker 2>/dev/null | awk '{print $1}')
         local S_APT=$(du -sh /var/cache/apt 2>/dev/null | awk '{print $1}'); local S_TMP=$(du -sh /tmp 2>/dev/null | awk '{print $1}')
-        local S_NGINX=$(du -sh /opt/remnawave/nginx_logs 2>/dev/null | awk '{print $1}')
+        local S_NGINX=$(du -sh "${BASE_DIR}/nginx_logs" 2>/dev/null | awk '{print $1}')
         echo -e " ${YELLOW}1.${NC} 📚 /var/log                 ${CYAN}[${S_LOG:-0}]${NC}  ${GRAY}(Безопасно очищать файлы)${NC}"
         echo -e " ${YELLOW}2.${NC} 🐳 /var/lib/docker          ${CYAN}[${S_DOCKER:-0}]${NC}  ${GRAY}(Только просмотр, удалять ОПАСНО)${NC}"
         echo -e " ${YELLOW}3.${NC} 📦 /var/cache/apt           ${CYAN}[${S_APT:-0}]${NC}  ${GRAY}(Безопасно удалять файлы)${NC}"
         echo -e " ${YELLOW}4.${NC} 🗑️  /tmp                     ${CYAN}[${S_TMP:-0}]${NC}  ${GRAY}(Безопасно удалять файлы)${NC}"
-        echo -e " ${YELLOW}5.${NC} 🌐 /opt/remnawave/nginx_logs ${CYAN}[${S_NGINX:-0}]${NC}  ${GRAY}(Логи панели)${NC}"
+        echo -e " ${YELLOW}5.${NC} 🌐 ${BASE_DIR}/nginx_logs ${CYAN}[${S_NGINX:-0}]${NC}  ${GRAY}(Логи панели)${NC}"
         echo -e "${BLUE}------------------------------------------------------${NC}"
         echo -e " ${CYAN}0.${NC} ↩️  Назад"
         read -p ">> " ad_choice
         case $ad_choice in
             1) inspect_directory "/var/log" "truncate" ;; 2) inspect_directory "/var/lib/docker" "block" ;;
-            3) inspect_directory "/var/cache/apt" "rm" ;; 4) inspect_directory "/tmp" "rm" ;; 5) inspect_directory "/opt/remnawave/nginx_logs" "truncate" ;;
+            3) inspect_directory "/var/cache/apt" "rm" ;; 4) inspect_directory "/tmp" "rm" ;; 5) inspect_directory "${BASE_DIR}/nginx_logs" "truncate" ;;
             0) return ;;
         esac
     done
@@ -140,7 +141,7 @@ lr_auto_scan() {
     echo -e "${GRAY}Ищем папки с .log файлами, которые не управляются системой...${NC}\n"
 
     # Ищем все .log файлы, исключаем системные, вытаскиваем уникальные папки
-    mapfile -t LOG_DIRS < <(find /opt /var/log /root -type f -name "*.log" 2>/dev/null | grep -vE "/var/log/(journal|apt|installer|unattended-upgrades)" | xargs -r dirname | sort -u)
+    mapfile -t LOG_DIRS < <(find "${BASE_DIR}" /var/log /root -type f -name "*.log" 2>/dev/null | grep -vE "/var/log/(journal|apt|installer|unattended-upgrades)" | xargs -r dirname | sort -u)
 
     if [ ${#LOG_DIRS[@]} -eq 0 ]; then
         echo -e "${YELLOW}Диких логов не найдено.${NC}"; pause; return
@@ -164,7 +165,7 @@ lr_auto_scan() {
     echo -e " Введите ${YELLOW}all${NC}, чтобы применить Глобальные настройки ко ВСЕМ диким папкам."
     echo -e " Или ${CYAN}0${NC} для выхода."
     read -p ">> " c_scan
-
+    
     [[ "$c_scan" == "0" || -z "$c_scan" ]] && return
 
     if [[ "$c_scan" == "all" ]]; then
@@ -195,7 +196,6 @@ lr_manual_add() {
     local DEF_SIZE=$1; local DEF_COUNT=$2
     clear; echo -e "${MAGENTA}=== РУЧНОЕ ДОБАВЛЕНИЕ ПУТИ ===${NC}"
     echo -e "Введите полный путь к файлу лога или папке (с /*.log на конце)."
-    echo -e "Пример: ${CYAN}/var/log/remnanode/*.log${NC}"
     read -p ">> Путь: " manual_path
     
     if [[ -n "$manual_path" ]]; then
@@ -248,11 +248,11 @@ manage_logrotate() {
         echo -e "\n 📊 Активных правил под вашим управлением: ${GREEN}${RULES_COUNT}${NC}\n"
 
         echo -e " ${GREEN}1.${NC} 🔍 Сканировать сервер на 'дикие' логи (Автопоиск)"
-        echo -e " ${YELLOW}2.${NC} ➕ Вписать путь к логам вручную (Например, для Remnanode)"
+        echo -e " ${YELLOW}2.${NC} ➕ Вписать путь к логам вручную"
         echo -e " ${YELLOW}3.${NC} 📋 Управление активными правилами (Просмотр / Удаление)"
         echo -e " ${YELLOW}4.${NC} ⚙️ Задать глобальные лимиты (сейчас: ${CYAN}${D_SIZE} / ${D_COUNT} шт.${NC})"
         echo -e "${BLUE}------------------------------------------------------${NC}"
-        echo -e " ${MAGENTA}5.${NC} 🚀 Принудительно запустить ротацию (Проверить сжатие логов)"
+        echo -e " ${MAGENTA}5.${NC} 🚀 Принудительно запустить ротацию"
         echo -e " ${CYAN}0.${NC} ↩️ Назад"
 
         read -p ">> " lr_choice
@@ -278,7 +278,7 @@ setup_cron() {
     clear; echo -e "${MAGENTA}=== ИНТЕРАКТИВНАЯ НАСТРОЙКА АВТООЧИСТКИ ===${NC}"
     echo -e "${GRAY}Скрипт будет сам запускать тихую очистку по вашему расписанию.${NC}\n"
 
-    local existing_job=$(crontab -l 2>/dev/null | grep '/usr/local/bin/don --silent-clean')
+    local existing_job=$(crontab -l 2>/dev/null | grep '--silent-clean')
     if [[ -n "$existing_job" ]]; then
         local e_min=$(echo "$existing_job" | awk '{print $1}')
         local e_hour=$(echo "$existing_job" | awk '{print $2}')
@@ -300,13 +300,8 @@ setup_cron() {
     fi
     
     echo -e "Выберите дни недели для запуска:"
-    echo -e " ${GRAY}(Можно указать несколько через запятую, например: 1,3,5)${NC}"
-    echo -e " 1 - Понедельник   5 - Пятница"
-    echo -e " 2 - Вторник       6 - Суббота"
-    echo -e " 3 - Среда         0 - Воскресенье"
-    echo -e " 4 - Четверг       * - Каждый день"
+    echo -e " 1,3,5 - Пн, Ср, Пт | * - Каждый день"
     read -p ">> Ваш выбор: " c_day
-    
     [[ ! "$c_day" =~ ^([0-6\*](,[0-6])*)$ ]] && { echo -e "${YELLOW}Неверный формат. Установлено: Каждый день (*)${NC}"; c_day="*"; }
     [[ -z "$c_day" ]] && c_day="*"
     
@@ -324,7 +319,6 @@ setup_cron() {
     (crontab -l 2>/dev/null; echo "$job") | crontab -
     
     echo -e "\n${GREEN}[✓] Автоочистка успешно настроена!${NC}"
-    echo -e "Время: ${CYAN}$(printf "%02d:%02d" "$c_hour" "$c_min" 2>/dev/null || echo "$c_hour:$c_min")${NC}, Дни недели: ${CYAN}${c_day}${NC}"
     pause
 }
 
@@ -336,28 +330,16 @@ menu_cleaner() {
         echo -e "${GRAY} Безопасное удаление системного мусора и логов.${NC}"
         echo -e "${BLUE}======================================================${NC}"
         echo -e " 💾 Текущее свободное место: ${GREEN}$(human_readable $(get_free_space))${NC}\n"
-        echo -e " ${GREEN}1.${NC} 🧹 Полная уборка (Максимум свободного места)"
+        echo -e " ${GREEN}1.${NC} 🧹 Полная уборка"
         echo -e " ${YELLOW}2.${NC} 📦 Очистить кэш APT"
-        echo -e " ${YELLOW}3.${NC} 📚 Очистить системные логи (Systemd)"
+        echo -e " ${YELLOW}3.${NC} 📚 Очистить системные логи"
         echo -e " ${YELLOW}4.${NC} 🐳 Очистить мусор Docker"
         echo -e " ${YELLOW}5.${NC} 🗑️ Очистить временные файлы (/tmp)"
         echo -e " ${YELLOW}6.${NC} 🧩 Очистить старые Snap пакеты"
         echo -e "${BLUE}------------------------------------------------------${NC}"
-        echo -e " ${CYAN}7.${NC} 🔍 Интерактивный Анализатор Диска (Smart Explorer)"
-        
-        if crontab -l 2>/dev/null | grep -q -- '--silent-clean'; then
-            echo -e " ${MAGENTA}8.${NC} ⏰ Настроить Автоочистку ${GREEN}[АКТИВНА]${NC}"
-        else
-            echo -e " ${MAGENTA}8.${NC} ⏰ Настроить Автоочистку (в Cron)"
-        fi
-        
-        local RULES_COUNT=$(ls /etc/logrotate.d/don_* /etc/logrotate.d/remnawave-nginx 2>/dev/null | wc -l)
-        if [ "$RULES_COUNT" -gt 0 ]; then
-            echo -e " ${MAGENTA}9.${NC} 🔄 Умная Ротация логов   ${GREEN}[АКТИВНА: ${RULES_COUNT} правил]${NC}"
-        else
-            echo -e " ${MAGENTA}9.${NC} 🔄 Умная Ротация логов   ${GRAY}(Защита от переполнения)${NC}"
-        fi
-        
+        echo -e " ${CYAN}7.${NC} 🔍 Интерактивный Анализатор Диска"
+        echo -e " ${MAGENTA}8.${NC} ⏰ Настроить Автоочистку"
+        echo -e " ${MAGENTA}9.${NC} 🔄 Умная Ротация логов"
         echo -e " ${CYAN}0.${NC} ↩️  Назад"
         read -p ">> " choice
         case $choice in

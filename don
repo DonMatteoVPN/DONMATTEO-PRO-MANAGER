@@ -2,7 +2,7 @@
 set -u
 
 # --- ТЕКУЩАЯ ВЕРСИЯ СКРИПТА ---
-export APP_VERSION="01.062"
+export APP_VERSION="02.007"
 export REPO_RAW="https://raw.githubusercontent.com/DonMatteoVPN/DONMATTEO-PRO-MANAGER/main"
 
 # Глобальные цвета
@@ -16,30 +16,63 @@ export GRAY='\033[0;90m'
 export NC='\033[0m'
 export BOLD='\033[1m'
 
-# Глобальные переменные путей
-export WHITELIST_FILE="/opt/remnawave/whitelist.txt"
-export CONNLIMIT_FILE="/opt/remnawave/limit_conn.txt"
-export RATELIMIT_FILE="/opt/remnawave/limit_rate.txt"
-export TG_URL_FILE="/opt/remnawave/tg_url.txt"
-export TG_LISTS_FILE="/opt/remnawave/tg_lists.txt"
-export MANUAL_FILE="/opt/trafficguard-manual.list"
-export BANTIME="24h"
-export MOD_DIR="/opt/remnawave/modules"
-
 if [[ $EUID -ne 0 ]]; then echo -e "${RED}Запустите команду от имени root (sudo).${NC}"; exit 1; fi
 
-# --- Загрузка модулей (Бронебойная) ---
-for mod in m_ufw m_ssh m_f2b m_tg m_swap m_cleaner m_installer m_update m_scanner m_node; do
-    if [[ -f "${MOD_DIR}/${mod}.sh" ]]; then
-        source "${MOD_DIR}/${mod}.sh" || echo -e "${RED}[!] Ошибка в коде модуля ${mod}${NC}"
+# --- Поиск базового ядра ---
+export BASE_DIR="/opt/remnawave/DONMATTEO-PRO-MANAGER"
+export OLD_BASE="/opt/remnawave"
+
+if [[ -f "${BASE_DIR}/modules/m_core.sh" ]]; then
+    source "${BASE_DIR}/modules/m_core.sh"
+elif [[ -f "${OLD_BASE}/modules/m_core.sh" ]]; then
+    # Если мы еще в старом месте — подгружаем оттуда, миграция случится ниже
+    source "${OLD_BASE}/modules/m_core.sh"
+else
+    echo -e "${RED}[!] КРИТИЧЕСКАЯ ОШИБКА: Ядро m_core.sh не найдено.${NC}"
+    exit 1
+fi
+
+# --- Миграция старых файлов (Один раз при запуске) ---
+migrate_old_files
+
+# --- Глобальные переменные путей (СТАНДАРТ v2) ---
+TG_CONF=$(ensure_module_config "tg")
+export TG_URL_FILE="${TG_CONF}/url.txt"
+export TG_LISTS_FILE="${TG_CONF}/lists.txt"
+
+F2B_CONF=$(ensure_module_config "f2b")
+export WHITELIST_FILE="${F2B_CONF}/whitelist.txt"
+export F2B_RETRY_FILE="${F2B_CONF}/maxretry.txt"
+export F2B_FIND_FILE="${F2B_CONF}/findtime.txt"
+export F2B_BAN_FILE="${F2B_CONF}/bantime.txt"
+
+UFW_CONF=$(ensure_module_config "ufw")
+export CONNLIMIT_FILE="${UFW_CONF}/limit_conn_ports.txt"
+export RATELIMIT_FILE="${UFW_CONF}/limit_rate_ports.txt"
+export CONN_VAL_FILE="${UFW_CONF}/limit_conn_val.txt"
+export RATE_VAL_FILE="${UFW_CONF}/limit_rate_val.txt"
+
+export MANUAL_FILE="${CONF_DIR}/tg/manual_ban.list"
+export BANTIME="24h"
+
+# --- Динамическая загрузка модулей ---
+load_modules() {
+    if [[ -f "$MOD_LIST_FILE" ]]; then
+        while read -r mod; do
+            [[ -z "$mod" || "$mod" == "m_core.sh" ]] && continue
+            if [[ -f "${MOD_DIR}/${mod}" ]]; then
+                source "${MOD_DIR}/${mod}" || echo -e "${RED}[!] Ошибка в модуле ${mod}${NC}"
+            fi
+        done < "$MOD_LIST_FILE"
     else
-        # Вместо exit 1 просто выводим предупреждение
-        echo -e "${YELLOW}[⚠️] Модуль ${mod} временно недоступен (не найден)${NC}"
-        # Создаем пустую функцию-заглушку, чтобы меню не падало при вызове
-        eval "menu_${mod/m_/}(){ echo -e '${RED}Ошибка: Модуль ${mod} не загружен. Обновите менеджер через пункт 8.${NC}'; pause; }"
+        for mod_path in "${MOD_DIR}"/m_*.sh; do
+            mod=$(basename "$mod_path")
+            [[ "$mod" == "m_core.sh" ]] && continue
+            source "$mod_path"
+        done
     fi
-done
-sleep 1 # Даем время увидеть, если что-то не загрузилось
+}
+load_modules
 
 if [[ "${1:-}" == "--silent-clean" ]]; then silent_cleaner_run; exit 0; fi
 
@@ -49,7 +82,7 @@ pause() { echo -e "\n${CYAN}Нажмите [Enter] для возврата...${N
 export -f pause
 
 # ======================================================================
-# --- ФУНКЦИИ СТАТУСОВ (БРОНЕБОЙНЫЕ) ---
+# --- ФУНКЦИИ СТАТУСОВ ---
 # ======================================================================
 get_sysctl_status() {
     if [[ "$(sysctl -n net.ipv4.tcp_syncookies 2>/dev/null)" == "1" ]]; then echo -e "${GREEN}[ВКЛЮЧЕНО]${NC}"; else echo -e "${RED}[НЕ УСТАНОВЛЕНО]${NC}"; fi
@@ -68,20 +101,10 @@ get_swap_status() {
     if [[ "$swp" != "0" && -n "$swp" ]]; then echo -e "${GREEN}[ВКЛЮЧЕНО: ${swp} MB]${NC}"; else echo -e "${RED}[ВЫКЛЮЧЕН]${NC}"; fi
 }
 get_ssh_status() {
-    # Проверяем статус службы (в разных ОС может быть ssh или sshd)
     local status_text
-    if systemctl is-active --quiet ssh || systemctl is-active --quiet sshd; then
-        status_text="${GREEN}[РАБОТАЕТ]${NC}"
-    else
-        status_text="${RED}[ВЫКЛЮЧЕН]${NC}"
-    fi
-
-    # Собираем все порты из конфига
+    if systemctl is-active --quiet ssh || systemctl is-active --quiet sshd; then status_text="${GREEN}[РАБОТАЕТ]${NC}"; else status_text="${RED}[ВЫКЛЮЧЕН]${NC}"; fi
     local ports=$(grep -i "^Port " /etc/ssh/sshd_config | awk '{print $2}' | xargs | sed 's/ /, /g')
-    
-    # Если в конфиге портов нет, значит используется стандартный 22
     [[ -z "$ports" ]] && ports="22"
-
     echo -e "${status_text} ${GRAY}(Порты: ${ports})${NC}"
 }
 
@@ -95,24 +118,38 @@ show_banner() {
     echo -e "                                                      "
     echo -e "${RED}${BOLD}              ОТ РЕШАЛЫ С ЛЮБОВЬЮ БЛЯТЬ         ${NC}"
     echo -e "${CYAN}======================================================${NC}"
-    echo -e " ${GRAY}Версия ядра: v${APP_VERSION}${NC}"
+    echo -e " ${GRAY}Версия ядра: v${APP_VERSION} (STD)${NC}"
     echo -e "${CYAN}======================================================${NC}"
 }
 
-# --- ПРОВЕРКА ОБНОВЛЕНИЙ (БЕЗ КЭША) ---
 check_updates() {
-    local API_URL="https://api.github.com/repos/DonMatteoVPN/DONMATTEO-PRO-MANAGER/contents/don"
-    REMOTE_VERSION=$(curl -s --max-time 3 -H "Accept: application/vnd.github.v3.raw" "$API_URL" | grep -m 1 '^export APP_VERSION=' | cut -d'"' -f2 | tr -d '\r\n ')
+    smart_dns_fix
     
-    if [[ -z "$REMOTE_VERSION" || ! "$REMOTE_VERSION" =~ ^[0-9]+\.[0-9]+$ ]]; then
-        REMOTE_VERSION=$(curl -s --max-time 3 "${REPO_RAW}/don" | grep -m 1 '^export APP_VERSION=' | cut -d'"' -f2 | tr -d '\r\n ')
+    local TS=$(date +%s)
+    local TEMP_VER="/tmp/ver_check.txt"
+    local JSD_URL="https://cdn.jsdelivr.net/gh/DonMatteoVPN/DONMATTEO-PRO-MANAGER@main/don?t=${TS}"
+    
+    # 1. Скачиваем во временный файл (защита от curl 23 / SIGPIPE)
+    if curl -fsSL --connect-timeout 2 --max-time 5 "$JSD_URL" -o "$TEMP_VER" 2>/dev/null; then
+        REMOTE_VERSION=$(grep '^export APP_VERSION=' "$TEMP_VER" | head -n 1 | cut -d'"' -f2 | tr -d '\r\n ')
+    fi
+
+    # 2. Если не вышло - пробуем напрямую GitHub
+    if [[ -z "$REMOTE_VERSION" ]]; then
+        local RAW_URL="https://raw.githubusercontent.com/DonMatteoVPN/DONMATTEO-PRO-MANAGER/main/don?t=${TS}"
+        if curl -fsSL --connect-timeout 2 --max-time 5 "$RAW_URL" -o "$TEMP_VER" 2>/dev/null; then
+            REMOTE_VERSION=$(grep '^export APP_VERSION=' "$TEMP_VER" | head -n 1 | cut -d'"' -f2 | tr -d '\r\n ')
+        fi
     fi
     
-    if [[ -n "$REMOTE_VERSION" && "$REMOTE_VERSION" != "$APP_VERSION" && "$REMOTE_VERSION" =~ ^[0-9]+\.[0-9]+$ ]]; then
-        export HAS_UPDATE="yes"
-        export LATEST_VER="$REMOTE_VERSION"
-    else
-        export HAS_UPDATE="no"
+    rm -f "$TEMP_VER"
+
+    if [[ -n "$REMOTE_VERSION" && "$REMOTE_VERSION" != "$APP_VERSION" ]]; then
+        # ЧЕСТНАЯ ПРОВЕРКА: Только если удаленная версия ВЫШЕ текущей
+        if version_gt "$REMOTE_VERSION" "$APP_VERSION"; then
+            export UPDATE_AVAILABLE=true
+            export LATEST_VER="$REMOTE_VERSION"
+        fi
     fi
 }
 
@@ -120,46 +157,35 @@ main_menu() {
     while true; do
         check_updates 
         clear; show_banner
-        
-        if [[ "$HAS_UPDATE" == "yes" ]]; then
+        if [[ "${UPDATE_AVAILABLE:-false}" == "true" ]]; then
             echo -e "${YELLOW}${BOLD}🎉 ВНИМАНИЕ! ДОСТУПНО НОВОЕ ОБНОВЛЕНИЕ МЕНЕДЖЕРА! 🎉${NC}"
             echo -e "${GREEN}✨ Вышла новая версия: v${LATEST_VER}${NC} (У вас v${APP_VERSION})"
             echo -e "${CYAN}👉 Нажмите [8], чтобы обновиться в один клик!${NC}"
             echo -e "${YELLOW}======================================================${NC}"
         fi
-
-        echo -e " ${GREEN}U.${NC} 🛠️  УСТАНОВКА И ИНИЦИАЛИЗАЦИЯ ${BLUE}(Sysctl + UFW + Fail2Ban)${NC}"
+        echo -e " ${GREEN}U.${NC} 🛠️ УСТАНОВКА И ИНИЦИАЛИЗАЦИЯ ${BLUE}(Sysctl + UFW + Fail2Ban)${NC}"
         echo -e " ${GREEN}R.${NC} 🔍 Reality TLS Scanner"
-        echo -e " ${GREEN}N.${NC} 🛰️  Управление Нодой (Логи / Базы / Ассеты)"
+        echo -e " ${GREEN}N.${NC} 🛰️ Управление Нодой (Логи / Базы / Ассеты)"
         echo -e "${BLUE}------------------------------------------------------${NC}"
         echo -e " ${YELLOW}1.${NC} 🌐 Сетевой Экран (UFW)\e[40G${NC}$(get_ufw_status)"
         echo -e " ${YELLOW}2.${NC} 🔑 Управление SSH (Порты)\e[40G${NC}$(get_ssh_status)"
         echo -e " ${YELLOW}3.${NC} 👮 Защита (Fail2Ban & Whitelist)\e[40G${NC}$(get_f2b_status)"
         echo -e " ${YELLOW}4.${NC} 🚦 TrafficGuard PRO\e[40G${NC}$(get_tg_status)"
-        echo -e " ${YELLOW}5.${NC} ⚙️  Настройки (Swap / Память)\e[40G${NC}$(get_swap_status)"
+        echo -e " ${YELLOW}5.${NC} ⚙️ Настройки (Swap / Память)\e[40G${NC}$(get_swap_status)"
         echo -e " ${YELLOW}6.${NC} 🧹 Очистка Сервера (Место на диске)"
-        
         if [[ "$HAS_UPDATE" == "yes" ]]; then
             echo -e "${BLUE}------------------------------------------------------${NC}"
             echo -e " ${GREEN}8.${NC} 🎁 ${BOLD}СКАЧАТЬ ОБНОВЛЕНИЕ ДО v${LATEST_VER}${NC}"
         fi
-        
         echo -e " ${RED}0.${NC} ❌ Выход                             "
         echo -e "${CYAN}======================================================${NC}"
         read -p "Выберите нужную категорию: " choice
-        
         case $choice in
-            u|U) install_menu ;;
-            r|R) menu_scanner ;;
-            n|N) menu_node ;;
-            1) menu_ufw ;; 
-            2) menu_ssh ;; 
-            3) menu_fail2ban ;; 
-            4) menu_trafficguard ;;
-            5) manage_swap ;; 
-            6) menu_cleaner ;;
+            u|U) install_menu ;; r|R) menu_scanner ;; n|N) menu_node ;;
+            1) menu_ufw ;; 2) menu_ssh ;; 3) menu_fail2ban ;; 4) menu_trafficguard ;;
+            5) manage_swap ;; 6) menu_cleaner ;;
             8) [[ "$HAS_UPDATE" == "yes" ]] && run_auto_update || echo -e "${RED}Обновлений нет.${NC}"; sleep 1 ;;
-            0) echo -e "${GREEN}Удачной работы! До связи! 💪${NC}"; exit 0 ;;
+            0) echo -e "${GREEN}Удачной работы! 💪${NC}"; exit 0 ;;
             *) echo -e "${RED}Ошибка: Неверный выбор.${NC}"; sleep 1 ;;
         esac
     done

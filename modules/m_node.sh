@@ -1,8 +1,9 @@
 #!/bin/bash
+# Модуль Remna-Node & Xray Assets
 
 # Пути
-export XRAY_ASSETS_DIR="/opt/remnawave/xray/share"
-export UPDATE_SCRIPT="/opt/remnawave/update_assets.sh"
+export XRAY_ASSETS_DIR="${BASE_DIR}/xray/share"
+export UPDATE_SCRIPT="${BASE_DIR}/update_assets.sh"
 
 # --- ФУНКЦИИ ЛОГОВ ---
 view_node_logs() {
@@ -13,9 +14,9 @@ view_node_logs() {
     case $log_type in
         "node_err") path="/var/log/remnanode/error.log" ;;
         "node_acc") path="/var/log/remnanode/access.log" ;;
-        "nginx_acc") path="/opt/remnawave/nginx_logs/access.log" ;;
-        "nginx_err") path="/opt/remnawave/nginx_logs/error.log" ;;
-        "nginx_stream") path="/opt/remnawave/nginx_logs/stream_scanners.log" ;;
+        "nginx_acc") path="${BASE_DIR}/nginx_logs/access.log" ;;
+        "nginx_err") path="${BASE_DIR}/nginx_logs/error.log" ;;
+        "nginx_stream") path="${BASE_DIR}/nginx_logs/stream_scanners.log" ;;
     esac
 
     clear
@@ -24,9 +25,9 @@ view_node_logs() {
     echo -e "${GRAY}Нажмите Ctrl+C для выхода...${NC}\n"
 
     if [[ -n "$email" ]]; then
-        tail -f "$path" | grep --line-buffered "email: $email"
+        tail -f "$path" 2>/dev/null | grep --line-buffered "email: $email" || echo -e "${RED}Лог пуст или недоступен.${NC}"
     else
-        tail -f "$path"
+        tail -f "$path" 2>/dev/null || echo -e "${RED}Лог пуст или недоступен.${NC}"
     fi
 }
 
@@ -64,19 +65,21 @@ install_assets() {
     cd "$XRAY_ASSETS_DIR" || return
 
     echo -e "${YELLOW}[1/3] Скачивание Zapret (Антизапрет РФ)...${NC}"
-    wget -q --show-progress -O zapret.dat https://github.com/kutovoys/ru_gov_zapret/releases/latest/download/zapret.dat
+    smart_curl "https://github.com/kutovoys/ru_gov_zapret/releases/latest/download/zapret.dat" "zapret.dat" 60
     
     echo -e "${YELLOW}[2/3] Скачивание MyGeoSite (Разблокировки)...${NC}"
-    wget -q --show-progress -O mygeosite.dat https://raw.githubusercontent.com/runetfreedom/russia-v2ray-rules-dat/release/geosite.dat
+    smart_curl "https://raw.githubusercontent.com/runetfreedom/russia-v2ray-rules-dat/release/geosite.dat" "mygeosite.dat" 60
     
     echo -e "${YELLOW}[3/3] Скачивание MyGeoIP (Регионы)...${NC}"
-    wget -q --show-progress -O mygeoip.dat https://raw.githubusercontent.com/runetfreedom/russia-v2ray-rules-dat/release/geoip.dat
+    smart_curl "https://raw.githubusercontent.com/runetfreedom/russia-v2ray-rules-dat/release/geoip.dat" "mygeoip.dat" 60
 
     if [[ -s "zapret.dat" && -s "mygeosite.dat" ]]; then
         echo -e "${GREEN}[+] Базы успешно установлены в $XRAY_ASSETS_DIR${NC}"
-        docker restart remnanode >/dev/null 2>&1
+        if command -v docker &>/dev/null; then
+            docker restart remnanode >/dev/null 2>&1 || echo -e "${YELLOW}[!] Контейнер remnanode не запущен.${NC}"
+        fi
     else
-        echo -e "${RED}[!] Ошибка при скачивании баз.${NC}"
+        echo -e "${RED}[!] Ошибка при скачивании баз. Проверьте сеть.${NC}"
     fi
     pause
 }
@@ -94,16 +97,24 @@ setup_assets_cron() {
     # Создаем скрипт обновления
     cat << EOF > "$UPDATE_SCRIPT"
 #!/bin/bash
-DIR="$XRAY_ASSETS_DIR"
-wget -q -O \$DIR/zapret.dat.new https://github.com/kutovoys/ru_gov_zapret/releases/latest/download/zapret.dat
-wget -q -O \$DIR/mygeosite.dat.new https://raw.githubusercontent.com/runetfreedom/russia-v2ray-rules-dat/release/geosite.dat
-wget -q -O \$DIR/mygeoip.dat.new https://raw.githubusercontent.com/runetfreedom/russia-v2ray-rules-dat/release/geoip.dat
+# Автоматическое обновление ассетов TrafficGuard
+export BASE_DIR="${BASE_DIR}"
+source "\${BASE_DIR}/modules/m_core.sh"
+
+DIR="\${BASE_DIR}/xray/share"
+mkdir -p "\$DIR"
+
+smart_curl "https://github.com/kutovoys/ru_gov_zapret/releases/latest/download/zapret.dat" "\$DIR/zapret.dat.new" 60
+smart_curl "https://raw.githubusercontent.com/runetfreedom/russia-v2ray-rules-dat/release/geosite.dat" "\$DIR/mygeosite.dat.new" 60
+smart_curl "https://raw.githubusercontent.com/runetfreedom/russia-v2ray-rules-dat/release/geoip.dat" "\$DIR/mygeoip.dat.new" 60
 
 if [ -s "\$DIR/zapret.dat.new" ] && [ -s "\$DIR/mygeosite.dat.new" ]; then
-    mv \$DIR/zapret.dat.new \$DIR/zapret.dat
-    mv \$DIR/mygeosite.dat.new \$DIR/mygeosite.dat
-    mv \$DIR/mygeoip.dat.new \$DIR/mygeoip.dat
-    docker restart remnanode
+    mv "\$DIR/zapret.dat.new" "\$DIR/zapret.dat"
+    mv "\$DIR/mygeosite.dat.new" "\$DIR/mygeosite.dat"
+    mv "\$DIR/mygeoip.dat.new" "\$DIR/mygeoip.dat"
+    if command -v docker &>/dev/null; then
+        docker restart remnanode >/dev/null 2>&1
+    fi
     echo "\$(date): Базы успешно обновлены" >> /var/log/xray_update.log
 else
     rm -f \$DIR/*.new
@@ -113,7 +124,7 @@ EOF
     chmod +x "$UPDATE_SCRIPT"
 
     # Удаляем старую задачу и добавляем новую
-    (crontab -l 2>/dev/null | grep -v "$UPDATE_SCRIPT") > /tmp/cron_tmp
+    (crontab -l 2>/dev/null | grep -v "$UPDATE_SCRIPT") > /tmp/cron_tmp || true
     echo "0 $hour * * $days $UPDATE_SCRIPT" >> /tmp/cron_tmp
     crontab /tmp/cron_tmp
     rm /tmp/cron_tmp
@@ -139,9 +150,9 @@ show_node_instructions() {
     echo -e "${GREEN}${BOLD} [ШАГ 2] Настройка Docker (${YELLOW}docker-compose.yml${GREEN})${NC}"
     echo -e " В блоке ${CYAN}remnanode -> volumes${NC} добавьте проброс баз и логов:"
     echo -e "${CYAN} - /var/log/remnanode:/var/log/remnanode
- - /opt/remnawave/xray/share/zapret.dat:/usr/local/bin/zapret.dat
- - /opt/remnawave/xray/share/mygeoip.dat:/usr/local/share/xray/mygeoip.dat
- - /opt/remnawave/xray/share/mygeosite.dat:/usr/local/share/xray/mygeosite.dat${NC}\n"
+ - ${BASE_DIR}/xray/share/zapret.dat:/usr/local/bin/zapret.dat
+ - ${BASE_DIR}/xray/share/mygeoip.dat:/usr/local/share/xray/mygeoip.dat
+ - ${BASE_DIR}/xray/share/mygeosite.dat:/usr/local/share/xray/mygeosite.dat${NC}\n"
 
     echo -e "${GREEN}${BOLD} [ШАГ 3] Использование в Routing (Примеры)${NC}"
     echo -e " Для ${YELLOW}Антизапрет${NC}: \"ext:zapret.dat:zapret\""

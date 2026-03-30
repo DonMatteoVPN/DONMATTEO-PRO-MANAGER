@@ -1,25 +1,22 @@
 #!/bin/bash
+# Модуль UFW (Сетевой экран и Anti-DDoS)
 
-# Пути к файлам настроек (значения лимитов)
-export CONN_VAL_FILE="/opt/remnawave/limit_conn_val.txt"
-export RATE_VAL_FILE="/opt/remnawave/limit_rate_val.txt"
-
-# Инициализация дефолтных значений, если файлы пусты
+# Инициализация дефолтных значений в новых путях, если файлы отсутствуют
 [[ ! -f "$CONN_VAL_FILE" ]] && echo "150" > "$CONN_VAL_FILE"
 [[ ! -f "$RATE_VAL_FILE" ]] && echo "80" > "$RATE_VAL_FILE"
+[[ ! -f "$CONNLIMIT_FILE" ]] && touch "$CONNLIMIT_FILE"
+[[ ! -f "$RATELIMIT_FILE" ]] && touch "$RATELIMIT_FILE"
 
 get_sysctl_status() {
     if [[ "$(sysctl -n net.ipv4.tcp_syncookies 2>/dev/null)" == "1" ]]; then echo -e "${GREEN}[ВКЛЮЧЕНО]${NC}"; else echo -e "${RED}[НЕ УСТАНОВЛЕНО]${NC}"; fi
 }
 
 get_ufw_status() {
-    if ufw status | grep -qw active; then echo -e "${GREEN}[РАБОТАЕТ]${NC}"; else echo -e "${RED}[ВЫКЛЮЧЕН]${NC}"; fi
+    if ufw status 2>/dev/null | grep -qw active; then echo -e "${GREEN}[РАБОТАЕТ]${NC}"; else echo -e "${RED}[ВЫКЛЮЧЕН]${NC}"; fi
 }
 
 get_ufw_log_status() {
-    # LANG=C заставляет UFW отвечать на английском, чтобы grep точно нашел слово
-    # -i делает поиск нечувствительным к регистру (Logging или logging)
-    if LANG=C ufw status verbose | grep -iq "logging: on"; then
+    if LANG=C ufw status verbose 2>/dev/null | grep -iq "logging: on"; then
         echo -e "${GREEN}[ВКЛЮЧЕНЫ]${NC}"
     else
         echo -e "${RED}[ВЫКЛЮЧЕНЫ]${NC}"
@@ -30,9 +27,8 @@ get_ufw_log_status() {
 ensure_rsyslog() {
     if ! command -v rsyslogd &> /dev/null; then
         echo -e "${CYAN}[*] Служба rsyslog не найдена. Установка для работы логов...${NC}"
-        apt-get update -qq && apt-get install rsyslog -y -qq
+        smart_apt_install "rsyslog"
         systemctl enable --now rsyslog >/dev/null 2>&1
-        # Даем немного времени на инициализацию файла лога
         sleep 2
     fi
 
@@ -41,7 +37,6 @@ ensure_rsyslog() {
         systemctl start rsyslog
     fi
 
-    # Проверяем, существует ли файл лога, если нет - создаем пустой
     if [ ! -f /var/log/ufw.log ]; then
         touch /var/log/ufw.log
         chmod 640 /var/log/ufw.log
@@ -49,17 +44,15 @@ ensure_rsyslog() {
     fi
 }
 
-
-
 # --- ГЛАВНАЯ ФУНКЦИЯ СБОРКИ ПРАВИЛ ---
 ufw_global_setup() {
     echo -e "${CYAN}[*] Пересборка правил Anti-DDoS и перезапуск UFW...${NC}"
-    apt-get install ufw -y -qq
+    smart_apt_install "ufw" || return 1
     
     local CONN_LIMIT=$(cat "$CONN_VAL_FILE")
     local RATE_LIMIT=$(cat "$RATE_VAL_FILE")
     
-    cp /etc/ufw/before.rules /etc/ufw/before.rules.bak
+    [[ -f /etc/ufw/before.rules ]] && cp /etc/ufw/before.rules /etc/ufw/before.rules.bak
     
     # Очистка старых блоков правил DonMatteo
     sed -i '/# --- НАЧАЛО: Правила защиты от DDoS (DonMatteo) ---/,/# --- КОНЕЦ: Направляем трафик на проверку скорости ---/d' /etc/ufw/before.rules
@@ -117,7 +110,6 @@ ufw_global_setup() {
     echo -e "${GREEN}[+] Правила успешно применены. Лимиты: Conn=$CONN_LIMIT, Rate=$RATE_LIMIT/s${NC}"
 }
 
-# Функция изменения числового значения лимита
 set_limit_val() {
     local FILE=$1; local NAME=$2
     clear; echo -e "${MAGENTA}=== ИЗМЕНЕНИЕ ЗНАЧЕНИЯ: $NAME ===${NC}"
@@ -179,11 +171,8 @@ ufw_limits_menu() {
     done
 }
 
-# --- МЕНЮ ЛОГОВ ---
 ufw_logs_menu() {
-    # ПРОВЕРКА ЗАВИСИМОСТЕЙ ПРИ ВХОДЕ
     ensure_rsyslog
-
     while true; do
         clear
         echo -e "${BLUE}======================================================${NC}"
@@ -211,14 +200,11 @@ ufw_logs_menu() {
     done
 }
 
-# --- ФУНКЦИИ АНАЛИЗА ---
-
 view_ufw_logs_live() {
     clear
     echo -e "${YELLOW}Мониторинг блокировок (Нажмите Ctrl+C для выхода)...${NC}"
     echo -e "${GRAY}Вы будете видеть только события [BLOCK] и [LIMIT]${NC}\n"
     
-    # Проверка наполнения лога
     if [ ! -s /var/log/ufw.log ]; then
         echo -e "${YELLOW}Лог-файл пока пуст. Попробуйте обновить страницу позже,${NC}"
         echo -e "${YELLOW}когда появятся первые заблокированные запросы.${NC}"
@@ -229,7 +215,6 @@ view_ufw_logs_live() {
         match($0, /SRC=([0-9.]+)/, src);
         match($0, /DPT=([0-9]+)/, dpt);
         match($0, /PROTO=([A-Z]+)/, proto);
-        # Если DPT не найден (например в ICMP), ставим прочерк
         port = (dpt[1] ? dpt[1] : "---");
         print "\033[1;31m[DROP]\033[0m IP: \033[1;33m" src[1] "\033[0m -> Port: \033[1;36m" port "\033[0m (" proto[1] ")"
     }'
@@ -239,9 +224,7 @@ show_top_attackers() {
     clear
     echo -e "${MAGENTA}=== ТОП-10 IP ПОД БЛОКИРОВКОЙ ===${NC}"
     echo -e "${GRAY}На основе текущего файла /var/log/ufw.log${NC}\n"
-    
     if [ ! -s /var/log/ufw.log ]; then echo -e "${RED}Файл логов пуст.${NC}"; pause; return; fi
-    
     grep "UFW BLOCK" /var/log/ufw.log | awk -F'SRC=' '{print $2}' | awk '{print $1}' | sort | uniq -c | sort -nr | head -n 10 | awk '{print "  [" $1 " атак] - " $2}'
     pause
 }
@@ -250,7 +233,6 @@ show_top_ports() {
     clear
     echo -e "${MAGENTA}=== САМЫЕ АТАКУЕМЫЕ ПОРТЫ ===${NC}\n"
     if [ ! -s /var/log/ufw.log ]; then echo -e "${RED}Файл логов пуст.${NC}"; pause; return; fi
-    
     grep "UFW BLOCK" /var/log/ufw.log | awk -F'DPT=' '{print $2}' | awk '{print $1}' | sort | uniq -c | sort -nr | head -n 5 | awk '{print "  Порт " $2 " - заблокировано " $1 " запросов"}'
     pause
 }
@@ -269,13 +251,9 @@ show_vpn_limits_help() {
     echo -e "   ${CYAN}Для VPN:${NC} Обычный клиент стучится 1-2 раза при подключении."
     echo -e "   Боты-сканеры (Shodan) стучатся 500+ раз в секунду."
     echo -e "   ${GREEN}Рекомендуемое значение:${NC} 50-100 в секунду."
-    echo -e "\n${BOLD}Как определить идеальное значение?${NC}"
-    echo -e "   Включите логи UFW (${YELLOW}ufw logging on${NC}). Если в логах много 'DROP' "
-    echo -e "   от реальных пользователей - повышайте значения на 50 пунктов."
     pause
 }
 
-# --- ОСТАЛЬНЫЕ ФУНКЦИИ (ПОРТЫ И IP) ---
 ufw_add_port() {
     clear; echo -e "${MAGENTA}=== ОТКРЫТИЕ ПОРТА ===${NC}"; read -p "Впишите порт: " port; [[ -z "$port" ]] && return
     read -p "Укажите протокол (tcp/udp/any) [any]: " proto; [[ -z "$proto" || "$proto" == "any" ]] && proto_str="" || proto_str="/$proto"
@@ -295,15 +273,13 @@ ufw_add_ip() {
 ufw_show_delete() {
     while true; do
         clear; echo -e "${MAGENTA}=== УДАЛЕНИЕ ПРАВИЛ FIREWALL ===${NC}"
-        ufw status numbered | sed -e 's/Status: active/Статус: Активен/' -e 's/Status: inactive/Статус: Выключен/' -e 's/To/Куда/' -e 's/Action/Действие/' -e 's/From/Откуда/'
+        ufw status numbered 2>/dev/null | sed -e 's/Status: active/Статус: Активен/' -e 's/Status: inactive/Статус: Выключен/' -e 's/To/Куда/' -e 's/Action/Действие/' -e 's/From/Откуда/'
         echo -e "\nВведите ${YELLOW}НОМЕР${NC} для удаления, или ${YELLOW}0${NC} для выхода:"
         read -p ">> " num
         [[ "$num" == "0" || -z "$num" ]] && return
         [[ "$num" =~ ^[0-9]+$ ]] && { echo "y" | ufw delete $num; echo -e "${GREEN}Правило удалено.${NC}"; sleep 1; } || { echo -e "${RED}Ошибка ввода.${NC}"; sleep 1; }
     done
 }
-
-# --- ОБНОВЛЕННОЕ ГЛАВНОЕ МЕНЮ МОДУЛЯ ---
 
 menu_ufw() {
     while true; do

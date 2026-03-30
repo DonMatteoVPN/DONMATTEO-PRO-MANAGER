@@ -15,19 +15,27 @@ check_scanner_install() {
     # Очистка от старого мусора (убиваем дефолтный out.csv)
     rm -f "$SCANNER_DIR/out.csv" 2>/dev/null
 
-    if [[ ! -f "$SCANNER_BIN" ]]; then
+if [[ ! -f "$SCANNER_BIN" ]]; then
         echo -e "${YELLOW}[*] Сканер не найден. Начинаю установку (Go 1.22+)...${NC}"
-        apt-get update >/dev/null 2>&1
-        apt-get install git wget curl -y >/dev/null 2>&1
         
-        wget -q https://go.dev/dl/go1.22.1.linux-amd64.tar.gz -O /tmp/go.tar.gz
+        # ⚡ ЕДИНЫЙ СТАНДАРТ: Установка пакетов
+        smart_apt_install "git"
+        smart_apt_install "curl"
+        smart_apt_install "wget"
+        
+        # ⚡ ЕДИНЫЙ СТАНДАРТ: Умное скачивание Go
+        echo -e "${GRAY}--> Скачивание Golang...${NC}"
+        smart_curl "https://go.dev/dl/go1.22.1.linux-amd64.tar.gz" "/tmp/go.tar.gz" 60 || return 1
+        
         rm -rf /usr/local/go
         tar -C /usr/local -xzf /tmp/go.tar.gz
         rm /tmp/go.tar.gz
         export PATH=/usr/local/go/bin:$PATH
 
         rm -rf "$SCANNER_DIR/RealiTLScanner_src"
-        git clone https://github.com/xtls/RealiTLScanner "$SCANNER_DIR/RealiTLScanner_src"
+        
+        # ⚡ ЕДИНЫЙ СТАНДАРТ: Умный Git Clone с зеркалами
+        smart_git_clone "https://github.com/xtls/RealiTLScanner" "$SCANNER_DIR/RealiTLScanner_src" || return 1
         
         cd "$SCANNER_DIR/RealiTLScanner_src" || return
         echo -e "${CYAN}[*] Компиляция бинарника...${NC}"
@@ -43,7 +51,7 @@ check_scanner_install() {
 
     if [[ ! -f "$GEO_DB" ]]; then
         echo -e "${YELLOW}[*] Загрузка MaxMind GeoLite2 (Country.mmdb)...${NC}"
-        curl -L -o "$GEO_DB" "https://github.com/Loyalsoldier/geoip/releases/latest/download/Country.mmdb" >/dev/null 2>&1
+        smart_curl "https://github.com/Loyalsoldier/geoip/releases/latest/download/Country.mmdb" "$GEO_DB" 30 || return 1
     fi
 }
 
@@ -100,14 +108,14 @@ run_single_scan() {
     REPORT_OUTPUT+="======================================================${nl}"
 
     if [[ -n "$ip_to_check" ]]; then
-        local org_info=$(curl -s --max-time 3 ipinfo.io/${ip_to_check}/org 2>/dev/null)
-        local city_info=$(curl -s --max-time 3 ipinfo.io/${ip_to_check}/city 2>/dev/null)
-        local country_info=$(curl -s --max-time 3 ipinfo.io/${ip_to_check}/country 2>/dev/null)
-        local host_name=$(curl -s --max-time 3 ipinfo.io/${ip_to_check}/hostname 2>/dev/null)
+        local provider=$(smart_curl_json "https://ipinfo.io/${ip_to_check}/json" "org" "Неизвестно")
+        local country=$(smart_curl_json "https://ipinfo.io/${ip_to_check}/json" "country" "??")
+        local city=$(smart_curl_json "https://ipinfo.io/${ip_to_check}/json" "city" "Неизвестно")
+        local host_name=$(smart_curl_json "https://ipinfo.io/${ip_to_check}/json" "hostname" "")
         
         REPORT_OUTPUT+=" 📡 ИНФОРМАЦИЯ О ПРОВАЙДЕРЕ (OSINT)${nl}"
-        REPORT_OUTPUT+="   └─ Провайдер (ASN): ${org_info:-Неизвестно}${nl}"
-        REPORT_OUTPUT+="   └─ Город:           ${city_info:-Неизвестно} (${country_info:-N/A})${nl}"
+        REPORT_OUTPUT+="   └─ Провайдер (ASN): ${provider}${nl}"
+        REPORT_OUTPUT+="   └─ Город:           ${city} (${country})${nl}"
         
         if [[ -n "$host_name" && "$host_name" != "null" ]]; then
             local base_domain=$(echo "$host_name" | awk -F. '{if (NF>1) print $(NF-1)"."$NF; else print $0}')

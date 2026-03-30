@@ -1,17 +1,31 @@
 #!/bin/bash
 
+# Функция статуса (используется в главном меню)
 get_tg_status() {
-    if systemctl is-active --quiet antiscan-aggregate.timer; then echo -e "${GREEN}[РАБОТАЕТ]${NC}"; elif [[ -f /usr/local/bin/traffic-guard ]]; then echo -e "${YELLOW}[УСТАНОВЛЕН, НО НЕ АКТИВЕН]${NC}"; else echo -e "${RED}[НЕ УСТАНОВЛЕНО]${NC}"; fi
+    if systemctl is-active --quiet antiscan-aggregate.timer; then 
+        echo -e "${GREEN}[РАБОТАЕТ]${NC}"
+    elif [[ -f /usr/local/bin/traffic-guard ]]; then 
+        echo -e "${YELLOW}[УСТАНОВЛЕН, НО НЕ АКТИВЕН]${NC}"
+    else 
+        echo -e "${RED}[НЕ УСТАНОВЛЕНО]${NC}"
+    fi
 }
 
 tg_sources_menu() {
     while true; do
         clear; echo -e "${MAGENTA}=== ИСТОЧНИКИ TRAFFICGUARD ===${NC}"
+        # Инициализация файлов если их нет
+        [[ ! -f "$TG_URL_FILE" ]] && echo "https://raw.githubusercontent.com/DonMatteoVPN/TrafficGuard/main/install.sh" > "$TG_URL_FILE"
+        [[ ! -f "$TG_LISTS_FILE" ]] && touch "$TG_LISTS_FILE"
+
         echo -e "${CYAN}Установщик (Основная ссылка):${NC}\n$(cat "$TG_URL_FILE")\n"
         echo -e "${CYAN}Списки блокировок (Подсети и IP):${NC}"
         local i=1; declare -a LIST_ARRAY
-        while read -r line; do [[ -n "$line" ]] && { echo -e "  ${YELLOW}[$i]${NC} $line"; LIST_ARRAY[$i]="$line"; ((i++)); }; done < "$TG_LISTS_FILE"
+        while read -r line; do 
+            [[ -n "$line" ]] && { echo -e "  ${YELLOW}[$i]${NC} $line"; LIST_ARRAY[$i]="$line"; ((i++)); }; 
+        done < "$TG_LISTS_FILE"
         [ $i -eq 1 ] && echo "  (Списков нет)"
+        
         echo -e "\n ${GREEN}1.${NC} Изменить URL установщика | ${GREEN}2.${NC} Добавить список | ${RED}3.${NC} Удалить | ${CYAN}0.${NC} Назад"
         read -p ">> " src_choice
         case $src_choice in
@@ -24,18 +38,53 @@ tg_sources_menu() {
 }
 
 tg_install() {
-    clear; echo -e "${CYAN}🚀 УСТАНОВКА TRAFFICGUARD PRO${NC}"
-    apt-get update -qq && apt-get install -y curl wget rsyslog ipset ufw grep sed coreutils whois -qq
+    clear; echo -e "${CYAN}🚀 УСТАНОВКА TRAFFICGUARD PRO (SMART MODE)${NC}"
+    
+    echo -e "${YELLOW}[*] Установка зависимостей...${NC}"
+    smart_apt_install "curl" || return 1
+    smart_apt_install "wget" || return 1
+    smart_apt_install "rsyslog" || return 1
+    smart_apt_install "ipset" || return 1
+    smart_apt_install "whois" || return 1
+    
+    echo -e "\n${YELLOW}[*] Предустановка Grafana (обход блокировок)...${NC}"
+    install_grafana_mirror || { echo -e "${RED}[!] Ошибка установки Grafana.${NC}"; pause; return; }
+
     systemctl enable --now rsyslog
+
+    echo -e "\n${YELLOW}[*] Скачивание и запуск установщика TrafficGuard...${NC}"
+    # Гарантируем наличие URL
+    [[ ! -f "$TG_URL_FILE" ]] && echo "https://raw.githubusercontent.com/DonMatteoVPN/TrafficGuard/main/install.sh" > "$TG_URL_FILE"
     local TG_URL=$(cat "$TG_URL_FILE")
-    if command -v curl >/dev/null; then curl -fsSL "$TG_URL" | bash; else wget -qO- "$TG_URL" | bash; fi
-    local TG_ARGS=""; while read -r list; do [[ -n "$list" ]] && TG_ARGS+=" -u $list"; done < "$TG_LISTS_FILE"
-    traffic-guard full $TG_ARGS --enable-logging
-    mkdir -p /var/log; touch /var/log/iptables-scanners-{ipv4,ipv6}.log
-    local LOG_GROUP="syslog"; getent group adm >/dev/null && LOG_GROUP="adm"
-    chown syslog:$LOG_GROUP /var/log/iptables-scanners-*.log; chmod 640 /var/log/iptables-scanners-*.log
-    systemctl restart rsyslog; systemctl restart antiscan-aggregate.service 2>/dev/null || true; systemctl restart antiscan-aggregate.timer
-    echo -e "\n${GREEN}✅ Установка полностью завершена!${NC}"; pause
+    
+    smart_curl "$TG_URL" "/tmp/tg_install.sh" || {
+        echo -e "${RED}[!] Ошибка скачивания скрипта TG.${NC}"; pause; return;
+    }
+    
+    bash /tmp/tg_install.sh
+    
+    if command -v traffic-guard >/dev/null; then
+        local TG_ARGS=""
+        if [[ -f "$TG_LISTS_FILE" ]]; then
+            while read -r list; do [[ -n "$list" ]] && TG_ARGS+=" -u $list"; done < "$TG_LISTS_FILE"
+        fi
+        traffic-guard full $TG_ARGS --enable-logging
+        
+        # Настройка логов
+        mkdir -p /var/log; touch /var/log/iptables-scanners-{ipv4,ipv6}.log
+        local LOG_GROUP="syslog"; getent group adm >/dev/null && LOG_GROUP="adm"
+        chown syslog:$LOG_GROUP /var/log/iptables-scanners-*.log; chmod 640 /var/log/iptables-scanners-*.log
+        
+        systemctl restart rsyslog
+        systemctl restart antiscan-aggregate.service 2>/dev/null || true
+        # Перезапускаем таймер только если он существует
+        if systemctl list-unit-files | grep -q antiscan-aggregate.timer; then
+            systemctl restart antiscan-aggregate.timer
+        fi
+        echo -e "\n${GREEN}✅ Установка полностью завершена!${NC}"; pause
+    else
+        echo -e "\n${RED}[!] Скрипт TrafficGuard отработал с ошибками.${NC}"; pause
+    fi
 }
 
 tg_uninstall() {
@@ -78,15 +127,10 @@ menu_trafficguard() {
         echo -e "  📊 В базе: ${GREEN}${IPSET_CNT}${NC} подсетей | 🔥 Отбито: ${RED}${PKTS_CNT}${NC} атак"
         echo -e "${BLUE}------------------------------------------------------${NC}"
         echo -e " ${YELLOW}1.${NC} 📈 Топ атак (Статистика CSV)"
-        echo -e "    ${GRAY}└─ Статистика, кто чаще всего сканирует твой сервер.${NC}"
         echo -e " ${YELLOW}2.${NC} 🕵 Логи (Live просмотр)"
-        echo -e "    ${GRAY}└─ Поток пакетов, отбрасываемых TrafficGuard.${NC}"
         echo -e " ${YELLOW}3.${NC} 🧪 Управление IP (Ручной Ban/Unban)"
-        echo -e "    ${GRAY}└─ Ручная блокировка вредных подсетей.${NC}"
         echo -e " ${YELLOW}4.${NC} 🔄 Обновить базы из Источников"
-        echo -e "    ${GRAY}└─ Скачивает свежие списки РКН и сканеров.${NC}"
         echo -e " ${YELLOW}5.${NC} 📁 Редактировать Источники (URL / Списки)"
-        echo -e "    ${GRAY}└─ Ссылки на файлы с IP адресами для блокировки.${NC}"
         echo -e " ${YELLOW}6.${NC} 🛠️  Установить / Переустановить"
         echo -e " ${RED}7.${NC} 🗑️  Удалить TrafficGuard с сервера"
         echo -e " ${CYAN}0.${NC} ↩️  Назад"
@@ -95,7 +139,7 @@ menu_trafficguard() {
             1) clear; echo -e "${GREEN}ТОП 20 АТАКУЮЩИХ:${NC}"; [ -f /var/log/iptables-scanners-aggregate.csv ] && tail -20 /var/log/iptables-scanners-aggregate.csv || echo "Нет собранных данных"; pause ;;
             2) clear; echo -e "${YELLOW}Нажмите Ctrl+C для возврата...${NC}"; tail -f /var/log/iptables-scanners-ipv4.log ;;
             3) tg_ban_unban ;;
-            4) clear; local TG_ARGS=""; while read -r list; do [[ -n "$list" ]] && TG_ARGS+=" -u $list"; done < "$TG_LISTS_FILE"; traffic-guard full $TG_ARGS --enable-logging; echo -e "${GREEN}Списки успешно обновлены.${NC}"; sleep 2 ;;
+            4) clear; local TG_ARGS=""; [[ -f "$TG_LISTS_FILE" ]] && while read -r list; do [[ -n "$list" ]] && TG_ARGS+=" -u $list"; done < "$TG_LISTS_FILE"; traffic-guard full $TG_ARGS --enable-logging; echo -e "${GREEN}Списки успешно обновлены.${NC}"; sleep 2 ;;
             5) tg_sources_menu ;; 6) tg_install ;; 7) tg_uninstall ;; 0) return ;;
         esac
     done
