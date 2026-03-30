@@ -10,6 +10,12 @@ export HAS_UPDATE="no"
 export LATEST_VER=""
 export UPDATE_AVAILABLE="false" 
 export FAST_MIRROR=""
+export OS_TYPE="linux"
+[[ "$(uname)" == "Darwin" ]] && export OS_TYPE="macos"
+
+# Проверка на macOS для тихой работы системных команд
+export OS_TYPE="linux"
+[[ "$(uname)" == "Darwin" ]] && export OS_TYPE="macos"
 
 # Глобальные цвета
 export RED='\033[0;31m'
@@ -97,21 +103,25 @@ get_sysctl_status() {
     if [[ "$(sysctl -n net.ipv4.tcp_syncookies 2>/dev/null)" == "1" ]]; then echo -e "${GREEN}[ВКЛЮЧЕНО]${NC}"; else echo -e "${RED}[НЕ УСТАНОВЛЕНО]${NC}"; fi
 }
 get_ufw_status() {
+    if [[ "${OS_TYPE:-}" == "macos" ]]; then echo -e "${YELLOW}[N/A]${NC}"; return; fi
     if ufw status 2>/dev/null | grep -qw active; then echo -e "${GREEN}[РАБОТАЕТ]${NC}"; else echo -e "${RED}[ВЫКЛЮЧЕН]${NC}"; fi
 }
 get_f2b_status() {
-    if systemctl is-active --quiet fail2ban; then echo -e "${GREEN}[РАБОТАЕТ]${NC}"; else echo -e "${RED}[НЕ УСТАНОВЛЕНО/ВЫКЛЮЧЕН]${NC}"; fi
+    if [[ "${OS_TYPE:-}" == "macos" ]]; then echo -e "${YELLOW}[N/A]${NC}"; return; fi
+    if systemctl is-active --quiet fail2ban 2>/dev/null; then echo -e "${GREEN}[РАБОТАЕТ]${NC}"; else echo -e "${RED}[НЕ УСТАНОВЛЕНО/ВЫКЛЮЧЕН]${NC}"; fi
 }
 get_tg_status() {
-    if systemctl is-active --quiet antiscan-aggregate.timer; then echo -e "${GREEN}[РАБОТАЕТ]${NC}"; elif [[ -f /usr/local/bin/traffic-guard ]]; then echo -e "${YELLOW}[УСТАНОВЛЕН, НО НЕ АКТИВЕН]${NC}"; else echo -e "${RED}[НЕ УСТАНОВЛЕНО]${NC}"; fi
+    if [[ "${OS_TYPE:-}" == "macos" ]]; then echo -e "${YELLOW}[N/A]${NC}"; return; fi
+    if systemctl is-active --quiet antiscan-aggregate.timer 2>/dev/null; then echo -e "${GREEN}[РАБОТАЕТ]${NC}"; elif [[ -f /usr/local/bin/traffic-guard ]]; then echo -e "${YELLOW}[УСТАНОВЛЕН, НО НЕ АКТИВЕН]${NC}"; else echo -e "${RED}[НЕ УСТАНОВЛЕНО]${NC}"; fi
 }
 get_swap_status() {
     local swp=$(free -m 2>/dev/null | awk '/^Swap:/ {print $2}')
     if [[ "$swp" != "0" && -n "$swp" ]]; then echo -e "${GREEN}[ВКЛЮЧЕНО: ${swp} MB]${NC}"; else echo -e "${RED}[ВЫКЛЮЧЕН]${NC}"; fi
 }
 get_ssh_status() {
+    if [[ "${OS_TYPE:-}" == "macos" ]]; then echo -e "${YELLOW}[N/A]${NC}"; return; fi
     local status_text
-    if systemctl is-active --quiet ssh || systemctl is-active --quiet sshd; then status_text="${GREEN}[РАБОТАЕТ]${NC}"; else status_text="${RED}[ВЫКЛЮЧЕН]${NC}"; fi
+    if systemctl is-active --quiet ssh 2>/dev/null || systemctl is-active --quiet sshd 2>/dev/null; then status_text="${GREEN}[РАБОТАЕТ]${NC}"; else status_text="${RED}[ВЫКЛЮЧЕН]${NC}"; fi
     local ports=$(grep -i "^Port " /etc/ssh/sshd_config | awk '{print $2}' | xargs | sed 's/ /, /g')
     [[ -z "$ports" ]] && ports="22"
     echo -e "${status_text} ${GRAY}(Порты: ${ports})${NC}"

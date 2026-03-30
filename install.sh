@@ -140,18 +140,32 @@ echo -e "${CYAN}================================================================
 echo -e "${CYAN}[*] Подготовка структуры директорий...${NC}"
 cleanup_legacy
 
+# 0.2 РЕЖИМ ЛОКАЛЬНОЙ РАЗРАБОТКИ
+export IS_LOCAL="false"
+if [[ -f "./don" && -d "./modules" ]]; then
+    export IS_LOCAL="true"
+    echo -e "${YELLOW}[!] Найдена локальная копия проекта. Используем локальные файлы для установки...${NC}"
+fi
+
 # Активация Speed Probe для быстрой установки
 find_fastest_mirror
 
 echo -e "${CYAN}[*] Синхронизация манифеста модулей...${NC}"
-if ! smart_download "modules.list" "${BASE_DIR}/modules.list"; then
-    echo -e "${RED} [!] Критическая ошибка: Не удалось скачать modules.list${NC}"
-    exit 1
+if [[ "$IS_LOCAL" == "true" ]]; then
+    cp "./modules.list" "${BASE_DIR}/modules.list" 2>/dev/null || ls modules/ > "${BASE_DIR}/modules.list"
+else
+    smart_download "modules.list" "${BASE_DIR}/modules.list"
 fi
 
-echo -e "${CYAN}[*] Скачивание главного ядра (don)...${NC}"
-if ! smart_download "don" "$BIN_PATH"; then
-    echo -e "${RED} [!] Ошибка скачивания don${NC}"
+echo -e "${CYAN}[*] Установка главного ядра (don)...${NC}"
+if [[ "$IS_LOCAL" == "true" ]]; then
+    cp "./don" "$BIN_PATH"
+else
+    smart_download "don" "$BIN_PATH"
+fi
+
+if [[ ! -f "$BIN_PATH" ]]; then
+    echo -e "${RED} [!] Ошибка установки don${NC}"
     exit 1
 fi
 tr -d '\r' < "$BIN_PATH" > "${BIN_PATH}.tmp" && mv "${BIN_PATH}.tmp" "$BIN_PATH"
@@ -161,20 +175,26 @@ echo -e "${CYAN}[*] Скачивание системных модулей...${N
 # Читаем список модулей из скачанного манифеста
 while read -r mod; do
     [[ -z "$mod" ]] && continue
-    echo -ne "  --> Загрузка ${mod}... "
-    if smart_download "modules/${mod}" "${BASE_DIR}/modules/${mod}"; then
+    echo -ne "  --> Загрузка/Копирование ${mod}... "
+    if [[ "$IS_LOCAL" == "true" && -f "./modules/${mod}" ]]; then
+        cp "./modules/${mod}" "${BASE_DIR}/modules/${mod}"
+        echo -e "${GREEN}[OK] (local)${NC}"
+    elif smart_download "modules/${mod}" "${BASE_DIR}/modules/${mod}"; then
         tr -d '\r' < "${BASE_DIR}/modules/${mod}" > "${BASE_DIR}/modules/${mod}.tmp" && mv "${BASE_DIR}/modules/${mod}.tmp" "${BASE_DIR}/modules/${mod}"
-        echo -e "${GREEN}[OK]${NC}"
+        echo -e "${GREEN}[OK] (remote)${NC}"
     else
         echo -e "${RED}[FAIL]${NC}"
     fi
 done < "${BASE_DIR}/modules.list"
 
-# Отдельно скачиваем m_core.sh, так как это основа
-echo -ne "  --> Загрузка m_core.sh... "
-if smart_download "modules/m_core.sh" "${BASE_DIR}/modules/m_core.sh"; then
+# Отдельно m_core.sh
+echo -ne "  --> Загрузка/Копирование m_core.sh... "
+if [[ "$IS_LOCAL" == "true" && -f "./modules/m_core.sh" ]]; then
+    cp "./modules/m_core.sh" "${BASE_DIR}/modules/m_core.sh"
+    echo -e "${GREEN}[OK] (local)${NC}"
+elif smart_download "modules/m_core.sh" "${BASE_DIR}/modules/m_core.sh"; then
     tr -d '\r' < "${BASE_DIR}/modules/m_core.sh" > "${BASE_DIR}/modules/m_core.sh.tmp" && mv "${BASE_DIR}/modules/m_core.sh.tmp" "${BASE_DIR}/modules/m_core.sh"
-    echo -e "${GREEN}[OK]${NC}"
+    echo -e "${GREEN}[OK] (remote)${NC}"
 else
     echo -e "${RED}[FAIL]${NC}"
 fi
