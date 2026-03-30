@@ -2,7 +2,7 @@
 set -u
 
 # --- ТЕКУЩАЯ ВЕРСИЯ СКРИПТА ---
-export APP_VERSION="02.104"
+export APP_VERSION="02.105"
 export REPO_RAW="https://raw.githubusercontent.com/DonMatteoVPN/DONMATTEO-PRO-MANAGER/main"
 
 # Глобальные флаги (Инициализация для set -u)
@@ -143,19 +143,21 @@ check_updates() {
     smart_dns_fix
     
     local TS=$(date +%s)
+    local RAND=$(( RANDOM % 9999 ))
+    local BUSTER="t=${TS}&s=${RAND}"
     local TEMP_VER="/tmp/ver_check.txt"
     local REMOTE_VERSION=""
-    local JSD_URL="https://cdn.jsdelivr.net/gh/DonMatteoVPN/DONMATTEO-PRO-MANAGER@main/don?t=${TS}"
     
-    # 1. Скачиваем во временный файл (защита от curl 23 / SIGPIPE)
-    if curl -fsSL --connect-timeout 2 --max-time 5 "$JSD_URL" -o "$TEMP_VER" 2>/dev/null; then
+    # 1. СНАЧАЛА GitHub Raw (Самый быстрый пробой кэша)
+    local RAW_URL="https://raw.githubusercontent.com/DonMatteoVPN/DONMATTEO-PRO-MANAGER/main/don?${BUSTER}"
+    if curl -fsSL --connect-timeout 2 --max-time 5 "$RAW_URL" -o "$TEMP_VER" 2>/dev/null; then
         REMOTE_VERSION=$(grep '^export APP_VERSION=' "$TEMP_VER" | head -n 1 | cut -d'"' -f2 | tr -d '\r\n ')
     fi
 
-    # 2. Если не вышло - пробуем напрямую GitHub
+    # 2. Если не вышло - пробуем jsDelivr (Fallback)
     if [[ -z "$REMOTE_VERSION" ]]; then
-        local RAW_URL="https://raw.githubusercontent.com/DonMatteoVPN/DONMATTEO-PRO-MANAGER/main/don?t=${TS}"
-        if curl -fsSL --connect-timeout 2 --max-time 5 "$RAW_URL" -o "$TEMP_VER" 2>/dev/null; then
+        local JSD_URL="https://cdn.jsdelivr.net/gh/DonMatteoVPN/DONMATTEO-PRO-MANAGER@main/don?${BUSTER}"
+        if curl -fsSL --connect-timeout 2 --max-time 5 "$JSD_URL" -o "$TEMP_VER" 2>/dev/null; then
             REMOTE_VERSION=$(grep '^export APP_VERSION=' "$TEMP_VER" | head -n 1 | cut -d'"' -f2 | tr -d '\r\n ')
         fi
     fi
