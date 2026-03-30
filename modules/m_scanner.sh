@@ -25,7 +25,7 @@ if [[ ! -f "$SCANNER_BIN" ]]; then
         
         # ⚡ ЕДИНЫЙ СТАНДАРТ: Умное скачивание Go
         echo -e "${GRAY}--> Скачивание Golang...${NC}"
-        smart_curl "https://go.dev/dl/go1.22.1.linux-amd64.tar.gz" "/tmp/go.tar.gz" 60 || return 1
+        smart_curl "https://go.dev/dl/go1.22.1.linux-amd64.tar.gz" "/tmp/go.tar.gz" 120 || return 1
         
         rm -rf /usr/local/go
         tar -C /usr/local -xzf /tmp/go.tar.gz
@@ -252,10 +252,10 @@ run_mass_recon() {
         FULL_REPORT+="======================================================${nl}"
 
         if [[ -n "$ip_to_check" ]]; then
-            local org_info=$(curl -s --max-time 3 ipinfo.io/${ip_to_check}/org 2>/dev/null)
-            local city_info=$(curl -s --max-time 3 ipinfo.io/${ip_to_check}/city 2>/dev/null)
-            local country_info=$(curl -s --max-time 3 ipinfo.io/${ip_to_check}/country 2>/dev/null)
-            local host_name=$(curl -s --max-time 3 ipinfo.io/${ip_to_check}/hostname 2>/dev/null)
+            local org_info=$(smart_curl_json "https://ipinfo.io/${ip_to_check}/json" "org" "Неизвестно")
+            local city_info=$(smart_curl_json "https://ipinfo.io/${ip_to_check}/json" "city" "Неизвестно")
+            local country_info=$(smart_curl_json "https://ipinfo.io/${ip_to_check}/json" "country" "??")
+            local host_name=$(smart_curl_json "https://ipinfo.io/${ip_to_check}/json" "hostname" "")
             
             FULL_REPORT+=" 📡 ИНФОРМАЦИЯ О ПРОВАЙДЕРЕ (OSINT)${nl}"
             FULL_REPORT+="   └─ Провайдер (ASN): ${org_info:-Неизвестно}${nl}"
@@ -384,8 +384,8 @@ analyze_results() {
     echo -e "${BOLD}🤖 АНАЛИЗАТОР: ОТБОР ИДЕАЛЬНЫХ SNI КАНДИДАТОВ${NC}"
     echo -e "${MAGENTA}======================================================${NC}"
     
-    local my_ip=$(curl -s --max-time 3 ipinfo.io/ip 2>/dev/null)
-    local my_geo=$(curl -s --max-time 3 ipinfo.io/country 2>/dev/null | tr -d '[:space:]')
+    local my_ip=$(smart_curl_json "https://ipinfo.io/json" "ip" "127.0.0.1")
+    local my_geo=$(smart_curl_json "https://ipinfo.io/json" "country" "??")
     
     echo -e "${CYAN}[*] Ваш текущий сервер:${NC} $my_ip ${YELLOW}($my_geo)${NC}"
     show_geo_help
@@ -780,7 +780,7 @@ manage_input_file() {
 
 menu_scanner() {
     check_scanner_install || return
-    local my_ip=$(curl -s --max-time 3 ipinfo.io/ip 2>/dev/null)
+    local my_ip=$(smart_curl_json "https://ipinfo.io/json" "ip" "127.0.0.1")
     local my_subnet=$(echo "$my_ip" | awk -F. '{print $1"."$2"."$3".0/24"}')
 
     while true; do

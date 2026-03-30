@@ -12,7 +12,7 @@ run_auto_update() {
     find_fastest_mirror
     
     # Пытаемся получить COMMIT_SHA для точной загрузки (если GitHub API доступен)
-    local COMMIT_SHA=$(smart_curl_json "https://api.github.com/repos/DonMatteoVPN/DONMATTEO-PRO-MANAGER/commits/main" | grep '"sha":' | head -n 1 | cut -d'"' -f4)
+    local COMMIT_SHA=$(smart_curl_json "https://api.github.com/repos/DonMatteoVPN/DONMATTEO-PRO-MANAGER/commits/main" "sha")
     
     local DL_BASE
     if [[ -n "$COMMIT_SHA" && ${#COMMIT_SHA} -eq 40 ]]; then
@@ -27,7 +27,7 @@ run_auto_update() {
     cp /usr/local/bin/don /usr/local/bin/don.bak 2>/dev/null || true
     
     echo -e "${CYAN}[*] Обновление ядра (don)...${NC}"
-    if smart_curl "${REPO_RAW}/don" "/usr/local/bin/don"; then
+    if smart_curl "${DL_BASE}/don" "/usr/local/bin/don"; then
         sed -i 's/\r$//' /usr/local/bin/don
         chmod +x /usr/local/bin/don
         echo -e "${GREEN}[+] Ядро успешно обновлено.${NC}"
@@ -38,14 +38,14 @@ run_auto_update() {
     fi
 
     echo -e "${CYAN}[*] Обновление манифеста модулей...${NC}"
-    smart_curl "${REPO_RAW}/modules.list" "$MOD_LIST_FILE"
+    smart_curl "${DL_BASE}/modules.list" "$MOD_LIST_FILE"
 
     echo -e "${CYAN}[*] Загрузка обновленных модулей...${NC}"
     if [[ -f "$MOD_LIST_FILE" ]]; then
         while read -r mod; do
             [[ -z "$mod" ]] && continue
             echo -e " └─ Синхронизация ${mod}..."
-            if smart_curl "${REPO_RAW}/modules/${mod}" "${MOD_DIR}/${mod}"; then
+            if smart_curl "${DL_BASE}/modules/${mod}" "${MOD_DIR}/${mod}"; then
                 sed -i 's/\r$//' "${MOD_DIR}/${mod}"
             else
                 echo -e "${RED}    [!] Ошибка при скачивании модуля ${mod}${NC}"

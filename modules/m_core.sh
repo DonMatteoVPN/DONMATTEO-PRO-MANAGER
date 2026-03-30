@@ -9,6 +9,8 @@ GH_PROXIES=(
     "https://ghproxy.org/"
     "https://gh.api.99988866.xyz/"
     "https://github.moeyy.xyz/"
+    "https://ghproxy.com.cn/"
+    "https://mirror.ghproxy.cc/"
 )
 
 # ======================================================================
@@ -37,13 +39,16 @@ find_fastest_mirror() {
 
     for base in "${candidates[@]}"; do
         local url="${base}/${test_file}?t=${TS}"
-        if curl -fsSL --connect-timeout 1 --max-time 2 "$url" -o /dev/null >/dev/null 2>&1; then
+        if curl -fsSL --connect-timeout 1 --max-time 3 "$url" -o /dev/null >/dev/null 2>&1; then
             export FAST_MIRROR="$base"
             echo -e "${GREEN}[+] Выбран канал: ${FAST_MIRROR}${NC}"
             return 0
         fi
     done
-    echo -e "${YELLOW}[!] Скоростные каналы недоступны. Режим адаптации.${NC}"
+    
+    # Режим "Зеркало" по умолчанию (надежный fallback)
+    export FAST_MIRROR="https://cdn.jsdelivr.net/gh/DonMatteoVPN/DONMATTEO-PRO-MANAGER@main"
+    echo -e "${YELLOW}[!] Используется стандартный канал (CDN): ${FAST_MIRROR}${NC}"
 }
 
 export CONF_DIR="${BASE_DIR}/etc"
@@ -142,39 +147,38 @@ restore_dns() {
 smart_curl() {
     local url="$1"
     local output="$2"
-    local timeout=${3:-15}
+    local timeout=${3:-20}
+    local max_time=$timeout
     
     # 0. Если у нас есть FAST_MIRROR и это файл из нашего репо
-    if [[ -n "$FAST_MIRROR" && "$url" == *"/DONMATTEO-PRO-MANAGER/"* ]]; then
+    if [[ -n "${FAST_MIRROR:-}" && "$url" == *"/DONMATTEO-PRO-MANAGER/"* ]]; then
         local relative_path=$(echo "$url" | sed 's|.*/DONMATTEO-PRO-MANAGER/||' | sed 's|main/||')
-        if curl -fsSL --connect-timeout 2 --max-time "$timeout" "${FAST_MIRROR}/${relative_path}" -o "$output" >/dev/null 2>&1; then
+        if curl -fsSL --connect-timeout 3 --max-time "$max_time" "${FAST_MIRROR}/${relative_path}" -o "$output" >/dev/null 2>&1; then
             return 0
         fi
     fi
 
-    # 1. Прямая попытка (если не через FAST_MIRROR)
-    if curl -fsSL --connect-timeout 2 --max-time "$timeout" "$url" -o "$output" >/dev/null 2>&1; then
+    # 1. Прямая попытка
+    if curl -fsSL --connect-timeout 3 --max-time "$max_time" "$url" -o "$output" >/dev/null 2>&1; then
         return 0
     fi
 
-    # 2. Фикс DNS и повторная попытка если не вышло
-    smart_dns_fix && curl -fsSL --connect-timeout 3 --max-time "$timeout" "$url" -o "$output" >/dev/null 2>&1 && { restore_dns; return 0; }
+    # 2. Фикс DNS и повторная попытка
+    smart_dns_fix && curl -fsSL --connect-timeout 5 --max-time "$max_time" "$url" -o "$output" >/dev/null 2>&1 && { restore_dns; return 0; }
 
     # 3. Если GitHub — пробуем jsDelivr (самое стабильное для сырых файлов)
     if [[ "$url" == *"raw.githubusercontent.com"* ]]; then
         local jsd_url=$(echo "$url" | sed -E 's|https://raw.githubusercontent.com/([^/]+)/([^/]+)/([^/]+)/(.*)|https://cdn.jsdelivr.net/gh/\1/\2@\3/\4|')
-        # ВАЖНО: jsDelivr может кешировать файлы. Для обновлений это риск, но для инсталлеров - супер.
-        if curl -fsSL --connect-timeout 4 --max-time "$max_time" "$jsd_url" -o "$output" >/dev/null 2>&1; then
+        if curl -fsSL --connect-timeout 5 --max-time "$max_time" "$jsd_url" -o "$output" >/dev/null 2>&1; then
             restore_dns; return 0
         fi
     fi
 
-    # 4. Пробуем список прокси (с очень коротким таймаутом на коннект)
+    # 4. Пробуем список прокси
     if [[ "$url" == *"github"* ]]; then
-        echo -e "${YELLOW}[!] Прямой доступ к GitHub ограничен. Пробуем зеркала...${NC}"
+        echo -e "${YELLOW}[!] Прямой доступ ограничен. Пробуем зеркала...${NC}"
         local clean_url=$(echo "$url" | sed -E 's|https?://[^/]+/https://|https://|g')
         for proxy in "${GH_PROXIES[@]}"; do
-            # 2 секунды на коннект - достаточно чтобы понять, живой ли прокси
             if curl -fsSL --connect-timeout 2 --max-time "$max_time" "${proxy}${clean_url}" -o "$output" >/dev/null 2>&1; then
                 echo -e "${GREEN}[+] Скачано через: ${proxy}${NC}"
                 restore_dns; return 0
@@ -182,7 +186,7 @@ smart_curl() {
         done
     fi
 
-    # 5. Режим "Отчаяние": без проверки SSL
+    # 5. Режим "Insecure"
     if curl -fsSLk --connect-timeout 5 --max-time "$max_time" "$url" -o "$output" >/dev/null 2>&1; then
         echo -e "${YELLOW}[!] Скачано через Insecure-режим.${NC}"
         restore_dns; return 0
@@ -232,79 +236,71 @@ safe_curl() { smart_curl "$@"; }
 # ======================================================================
 smart_apt_install() {
     local pkg="$1"
-    # Если пакет уже есть — выходим (кроме случаев когда нужно переустановить, но тут это не требуется)
+    # Если пакет уже есть — выходим
     if dpkg -s "$pkg" >/dev/null 2>&1; then return 0; fi
 
     echo -ne "${CYAN}--> Установка ${pkg}... ${NC}"
     
-    # 1. Ждем снятия локов (если apt кем-то занят)
+    # 1. Ждем снятия локов
     local lock_files=("/var/lib/dpkg/lock-frontend" "/var/lib/apt/lists/lock" "/var/cache/apt/archives/lock")
     for lock in "${lock_files[@]}"; do
-        if [[ -f "$lock" ]]; then
+        if [[ -e "$lock" ]]; then
             local count=0
-            while fuser "$lock" >/dev/null 2>&1 && [ $count -lt 10 ]; do
-                echo -e "${YELLOW}[!] Ждем APT ($lock)...${NC}"
+            while fuser "$lock" >/dev/null 2>&1 && [ $count -lt 30 ]; do
+                echo -ne "\r${YELLOW}[!] Ждем APT ($lock)... $count/30${NC}"
                 sleep 2
                 ((count++))
             done
-            [[ $count -eq 10 ]] && rm -f "$lock" # Принудительно если зависло
+            [[ $count -eq 30 ]] && { fuser -k "$lock" >/dev/null 2>&1; rm -f "$lock"; }
         fi
     done
 
-    # 2. Попытки установки
+    # 2. Параметры установки
     export DEBIAN_FRONTEND=noninteractive
     local opts="-y -qq -o Dpkg::Options::='--force-confdef' -o Dpkg::Options::='--force-confold'"
     
-    # Попытка 1: Простая
+    # Попытка 1: Обычная
     if apt-get install $opts "$pkg" >/dev/null 2>&1; then
         echo -e "${GREEN}[УСПЕШНО]${NC}"; return 0
     fi
 
     # Попытка 2: После update
+    echo -ne "\r${YELLOW}[*] Обновление списков пакетов...${NC}"
     apt-get update -qq >/dev/null 2>&1
     if apt-get install $opts "$pkg" >/dev/null 2>&1; then
-        echo -e "${GREEN}[УСПЕШНО]${NC}"; return 0
+        echo -e "\r${GREEN}[УСПЕШНО] (после update)${NC}"; return 0
     fi
 
-    # Попытка 3: Смена зеркал на Yandex (если это не Grafana)
-    if [[ "$pkg" != "grafana" ]]; then
-        echo -e "${YELLOW}[!] Пробуем через зеркало Yandex...${NC}"
+    # Попытка 3: Зеркала
+    local mirrors=("https://mirror.yandex.ru" "http://mirror.umd.edu" "http://debian.mirror.constant.com")
+    for mir in "${mirrors[@]}"; do
+        echo -ne "\r${YELLOW}[!] Пробуем через зеркало: $mir...${NC}"
         [[ ! -f /etc/apt/sources.list.bak ]] && cp /etc/apt/sources.list /etc/apt/sources.list.bak
-        sed -i 's|http://.*.debian.org|https://mirror.yandex.ru|g' /etc/apt/sources.list
-        sed -i 's|http://.*.ubuntu.com|https://mirror.yandex.ru|g' /etc/apt/sources.list
+        sed -i "s|http://.*.debian.org|$mir|g" /etc/apt/sources.list
+        sed -i "s|http://.*.ubuntu.com|$mir|g" /etc/apt/sources.list
         apt-get update -qq >/dev/null 2>&1
         if apt-get install $opts "$pkg" >/dev/null 2>&1; then
-            echo -e "${GREEN}[УСПЕШНО]${NC}"
+            echo -e "\r${GREEN}[УСПЕШНО] (через $mir)${NC}"
             mv /etc/apt/sources.list.bak /etc/apt/sources.list; return 0
         fi
         mv /etc/apt/sources.list.bak /etc/apt/sources.list
-    else
-        # Спец. логика для Grafana
-        echo -e "${YELLOW}[!] Пробуем обход блокировок Grafana...${NC}"
-        # Tsinghua
-        echo "deb [trusted=yes] https://mirrors.tuna.tsinghua.edu.cn/grafana/apt/ stable main" > /etc/apt/sources.list.d/grafana-mirror.list
-        apt-get update -qq >/dev/null 2>&1 && apt-get install $opts grafana >/dev/null 2>&1 && { echo -e "${GREEN}[УСПЕШНО]${NC}"; return 0; }
-        
-        # Yandex
-        echo "deb [trusted=yes] https://mirror.yandex.ru/mirrors/packages.grafana.com/oss/deb stable main" > /etc/apt/sources.list.d/grafana-mirror.list
+    done
 
-        # Способ 3: Прямая загрузка .deb пакета (100% результат)
-        echo -e "${GRAY}  [3/3] Прямая загрузка .deb пакета...${NC}"
-        local GRAFANA_DEB="/tmp/grafana_latest.deb"
-        # Пытаемся скачать через smart_curl (он умеет прокси)
-        if smart_curl "https://dl.grafana.com/oss/release/grafana_11.5.0_amd64.deb" "$GRAFANA_DEB" 60; then
-            dpkg -i "$GRAFANA_DEB" >/dev/null 2>&1 || apt-get install -f -y -qq >/dev/null 2>&1
+    # Специальный случай для Grafana
+    if [[ "$pkg" == "grafana" ]]; then
+        echo -ne "\r${YELLOW}[!] Прямая установка Grafana .deb...${NC}"
+        local DEB="/tmp/grafana_latest.deb"
+        if smart_curl "https://dl.grafana.com/oss/release/grafana_11.5.0_amd64.deb" "$DEB" 60; then
+            dpkg -i "$DEB" >/dev/null 2>&1 || apt-get install -f -y -qq >/dev/null 2>&1
             if command -v grafana-server >/dev/null; then
-                echo -e "${GREEN}[УСПЕШНО] Grafana установлена напрямую.${NC}"
-                rm -f "$GRAFANA_DEB"
-                return 0
+                echo -e "\r${GREEN}[УСПЕШНО] Grafana установлена напрямую.${NC}"
+                rm -f "$DEB"; return 0
             fi
         fi
-        
-        echo -e "${RED}[!] Даже супер-умная система не смогла установить Grafana. Проверьте интернет!${NC}"
-        return 1
     fi
-    return 0
+
+    echo -e "\r${RED}[!] СИСТЕМНАЯ ОШИБКА: Пакет ${pkg} не установлен.${NC}"
+    return 1
 }
 
 # Совместимость со старыми модулями

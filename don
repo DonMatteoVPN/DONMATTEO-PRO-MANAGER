@@ -4,6 +4,8 @@ set -u
 # --- ТЕКУЩАЯ ВЕРСИЯ СКРИПТА ---
 export APP_VERSION="02.007"
 export REPO_RAW="https://raw.githubusercontent.com/DonMatteoVPN/DONMATTEO-PRO-MANAGER/main"
+export HAS_UPDATE="no"
+export UPDATE_AVAILABLE="false" # Compatibility
 
 # Глобальные цвета
 export RED='\033[0;31m'
@@ -73,6 +75,9 @@ load_modules() {
     fi
 }
 load_modules
+
+# --- Инициализация сети ---
+find_fastest_mirror
 
 if [[ "${1:-}" == "--silent-clean" ]]; then silent_cleaner_run; exit 0; fi
 
@@ -147,8 +152,9 @@ check_updates() {
     if [[ -n "$REMOTE_VERSION" && "$REMOTE_VERSION" != "$APP_VERSION" ]]; then
         # ЧЕСТНАЯ ПРОВЕРКА: Только если удаленная версия ВЫШЕ текущей
         if version_gt "$REMOTE_VERSION" "$APP_VERSION"; then
-            export UPDATE_AVAILABLE=true
+            export HAS_UPDATE="yes"
             export LATEST_VER="$REMOTE_VERSION"
+            export UPDATE_AVAILABLE="true"
         fi
     fi
 }
@@ -157,7 +163,7 @@ main_menu() {
     while true; do
         check_updates 
         clear; show_banner
-        if [[ "${UPDATE_AVAILABLE:-false}" == "true" ]]; then
+        if [[ "$HAS_UPDATE" == "yes" ]]; then
             echo -e "${YELLOW}${BOLD}🎉 ВНИМАНИЕ! ДОСТУПНО НОВОЕ ОБНОВЛЕНИЕ МЕНЕДЖЕРА! 🎉${NC}"
             echo -e "${GREEN}✨ Вышла новая версия: v${LATEST_VER}${NC} (У вас v${APP_VERSION})"
             echo -e "${CYAN}👉 Нажмите [8], чтобы обновиться в один клик!${NC}"
