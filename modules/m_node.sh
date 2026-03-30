@@ -268,10 +268,13 @@ menu_node() {
         echo -e "${BLUE}======================================================${NC}"
         echo -e "${BOLD}${MAGENTA}  🛰️  УПРАВЛЕНИЕ REMNA-NODE & XRAY ASSETS${NC}"
         echo -e "${BLUE}======================================================${NC}"
-        echo -e " ${YELLOW}1.${NC} 📋 Просмотр Логов (Нода / Nginx / Email)"
-        echo -e " ${YELLOW}2.${NC} 📥 Установить базы (Zapret / GeoIP / GeoSite)"
-        echo -e " ${YELLOW}3.${NC} ⏰ Настроить автообновление баз (Cron) $(get_node_autoupdate_status)"
-        echo -e " ${YELLOW}4.${NC} 📖 Инструкция по подключению к панели"
+        echo -e "${GRAY} Управление логами, базами данных и автообновлением.${NC}"
+        echo -e "${YELLOW} 👉 Нажмите [4], чтобы прочитать инструкцию.${NC}\n"
+        echo -e " ${GREEN}1.${NC} 📋 Просмотр Логов (Нода / Nginx / Email)"
+        echo -e " ${GREEN}2.${NC} 📥 Установить базы (Zapret / GeoIP / GeoSite)"
+        echo -e " ${GREEN}3.${NC} ⏰ Настроить автообновление баз (Cron) $(get_node_autoupdate_status)"
+        echo -e "${BLUE}------------------------------------------------------${NC}"
+        echo -e " ${MAGENTA}${BOLD}4.${NC} 📖 ЧИТАТЬ ИНСТРУКЦИЮ (ПОДКЛЮЧЕНИЕ БАЗ И ЛОГОВ)${NC}"
         echo -e " ${CYAN}0.${NC} ↩️  Назад"
         read -p ">> " choice
         case $choice in
