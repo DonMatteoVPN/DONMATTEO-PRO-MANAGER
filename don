@@ -2,7 +2,7 @@
 set -u
 
 # --- ТЕКУЩАЯ ВЕРСИЯ СКРИПТА ---
-export APP_VERSION="02.103"
+export APP_VERSION="02.104"
 export REPO_RAW="https://raw.githubusercontent.com/DonMatteoVPN/DONMATTEO-PRO-MANAGER/main"
 
 # Глобальные флаги (Инициализация для set -u)
@@ -173,6 +173,11 @@ check_updates() {
 }
 
 main_menu() {
+    if [[ "${DEBUG:-false}" == "true" ]]; then
+        echo -e "${YELLOW}${BOLD}[ DEBUG MODE: ON ]${NC}"
+        echo -e "${GRAY}Все сообщения об ошибках и детальный вывод команд включены.${NC}\n"
+    fi
+
     while true; do
         check_updates 
         clear; show_banner

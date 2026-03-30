@@ -246,17 +246,19 @@ smart_apt_install() {
     
     # 1. Ждем снятия локов
     local lock_files=("/var/lib/dpkg/lock-frontend" "/var/lib/apt/lists/lock" "/var/cache/apt/archives/lock")
-    for lock in "${lock_files[@]}"; do
-        if [[ -e "$lock" ]]; then
-            local count=0
-            while fuser "$lock" >/dev/null 2>&1 && [ $count -lt 30 ]; do
-                echo -ne "\r${YELLOW}[!] Ждем APT ($lock)... $count/30${NC}"
-                sleep 2
-                ((count++))
-            done
-            [[ $count -eq 30 ]] && { fuser -k "$lock" >/dev/null 2>&1; rm -f "$lock"; }
-        fi
-    done
+    if command -v fuser >/dev/null 2>&1; then
+        for lock in "${lock_files[@]}"; do
+            if [[ -e "$lock" ]]; then
+                local count=0
+                while fuser "$lock" >/dev/null 2>&1 && [ $count -lt 30 ]; do
+                    echo -ne "\r${YELLOW}[!] Ждем APT ($lock)... $count/30${NC}"
+                    sleep 2
+                    ((count++))
+                done
+                [[ $count -eq 30 ]] && { fuser -k "$lock" >/dev/null 2>&1; rm -f "$lock"; }
+            fi
+        done
+    fi
 
     # 2. Параметры установки
     export DEBIAN_FRONTEND=noninteractive

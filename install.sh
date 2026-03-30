@@ -92,7 +92,7 @@ smart_dns_fix() {
 smart_download() {
     local path=$1
     local output=$2
-    local TS=$(date +%s%N 2>/dev/null || date +%s)
+    local TS=$(date +%s)
     local RAND=$(( RANDOM % 9999 ))
     local BUSTER="t=${TS}&s=${RAND}"
     
