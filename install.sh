@@ -154,7 +154,7 @@ if ! smart_download "don" "$BIN_PATH"; then
     echo -e "${RED} [!] Ошибка скачивания don${NC}"
     exit 1
 fi
-sed -i 's/\r$//' "$BIN_PATH"
+tr -d '\r' < "$BIN_PATH" > "${BIN_PATH}.tmp" && mv "${BIN_PATH}.tmp" "$BIN_PATH"
 chmod +x "$BIN_PATH"
 
 echo -e "${CYAN}[*] Скачивание системных модулей...${NC}"
@@ -163,7 +163,7 @@ while read -r mod; do
     [[ -z "$mod" ]] && continue
     echo -ne "  --> Загрузка ${mod}... "
     if smart_download "modules/${mod}" "${BASE_DIR}/modules/${mod}"; then
-        sed -i 's/\r$//' "${BASE_DIR}/modules/${mod}"
+        tr -d '\r' < "${BASE_DIR}/modules/${mod}" > "${BASE_DIR}/modules/${mod}.tmp" && mv "${BASE_DIR}/modules/${mod}.tmp" "${BASE_DIR}/modules/${mod}"
         echo -e "${GREEN}[OK]${NC}"
     else
         echo -e "${RED}[FAIL]${NC}"
@@ -172,8 +172,12 @@ done < "${BASE_DIR}/modules.list"
 
 # Отдельно скачиваем m_core.sh, так как это основа
 echo -ne "  --> Загрузка m_core.sh... "
-smart_download "modules/m_core.sh" "${BASE_DIR}/modules/m_core.sh"
-echo -e "${GREEN}[OK]${NC}"
+if smart_download "modules/m_core.sh" "${BASE_DIR}/modules/m_core.sh"; then
+    tr -d '\r' < "${BASE_DIR}/modules/m_core.sh" > "${BASE_DIR}/modules/m_core.sh.tmp" && mv "${BASE_DIR}/modules/m_core.sh.tmp" "${BASE_DIR}/modules/m_core.sh"
+    echo -e "${GREEN}[OK]${NC}"
+else
+    echo -e "${RED}[FAIL]${NC}"
+fi
 
 clear
 echo -e "${CYAN}================================================================${NC}"

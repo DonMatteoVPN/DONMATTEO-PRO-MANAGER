@@ -28,7 +28,7 @@ run_auto_update() {
     
     echo -e "${CYAN}[*] Обновление ядра (don)...${NC}"
     if smart_curl "${DL_BASE}/don" "/usr/local/bin/don"; then
-        sed -i 's/\r$//' /usr/local/bin/don
+        tr -d '\r' < /usr/local/bin/don > /usr/local/bin/don.tmp && mv /usr/local/bin/don.tmp /usr/local/bin/don
         chmod +x /usr/local/bin/don
         echo -e "${GREEN}[+] Ядро успешно обновлено.${NC}"
     else
@@ -46,7 +46,7 @@ run_auto_update() {
             [[ -z "$mod" ]] && continue
             echo -e " └─ Синхронизация ${mod}..."
             if smart_curl "${DL_BASE}/modules/${mod}" "${MOD_DIR}/${mod}"; then
-                sed -i 's/\r$//' "${MOD_DIR}/${mod}"
+                tr -d '\r' < "${MOD_DIR}/${mod}" > "${MOD_DIR}/${mod}.tmp" && mv "${MOD_DIR}/${mod}.tmp" "${MOD_DIR}/${mod}"
             else
                 echo -e "${RED}    [!] Ошибка при скачивании модуля ${mod}${NC}"
             fi

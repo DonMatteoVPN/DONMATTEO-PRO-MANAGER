@@ -136,6 +136,7 @@ check_updates() {
     
     local TS=$(date +%s)
     local TEMP_VER="/tmp/ver_check.txt"
+    local REMOTE_VERSION=""
     local JSD_URL="https://cdn.jsdelivr.net/gh/DonMatteoVPN/DONMATTEO-PRO-MANAGER@main/don?t=${TS}"
     
     # 1. Скачиваем во временный файл (защита от curl 23 / SIGPIPE)
