@@ -2,7 +2,7 @@
 set -u
 
 # --- ТЕКУЩАЯ ВЕРСИЯ СКРИПТА ---
-export APP_VERSION="02.007"
+export APP_VERSION="02.100"
 export REPO_RAW="https://raw.githubusercontent.com/DonMatteoVPN/DONMATTEO-PRO-MANAGER/main"
 
 # Глобальные флаги (Инициализация для set -u)
