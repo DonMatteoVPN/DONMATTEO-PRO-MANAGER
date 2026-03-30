@@ -228,32 +228,37 @@ EOF
 
 show_node_instructions() {
     clear
-    echo -e "${MAGENTA}======================================================================${NC}"
-    echo -e "${BOLD}${YELLOW} ⚠️  ИНСТРУКЦИЯ: КАК ПОДКЛЮЧИТЬ БАЗЫ И ЛОГИ К НОДЕ ⚠️${NC}"
-    echo -e "${MAGENTA}======================================================================${NC}"
+    echo -e "${BLUE}======================================================${NC}"
+    echo -e "${BOLD}${MAGENTA}  📖 ИНСТРУКЦИЯ: ПОДКЛЮЧЕНИЕ БАЗ И ЛОГОВ${NC}"
+    echo -e "${BLUE}======================================================${NC}"
+    echo -e "${GRAY} Настройте ноду для работы с базами и логированием.${NC}"
+    echo -e "${BLUE}======================================================${NC}\n"
     
     echo -e "${GREEN}${BOLD} [ШАГ 1] Включение Логов (В Панели)${NC}"
-    echo -e " Вставьте этот блок в самый верх конфига ноды в панели:"
+    echo -e " Вставьте этот блок в самый верх конфига ноды в панели:\n"
     echo -e "${CYAN} \"log\": {
-    \"error\": \"/var/log/remnanode/error.log\",
-    \"access\": \"/var/log/remnanode/access.log\",
-    \"loglevel\": \"warning\"
-  },${NC}\n"
+     \"error\": \"/var/log/remnanode/error.log\",
+     \"access\": \"/var/log/remnanode/access.log\",
+     \"loglevel\": \"warning\"
+   },${NC}\n"
 
     echo -e "${GREEN}${BOLD} [ШАГ 2] Настройка Docker (${YELLOW}docker-compose.yml${GREEN})${NC}"
-    echo -e " В блоке ${CYAN}remnanode -> volumes${NC} добавьте проброс баз и логов:"
+    echo -e " В блоке ${CYAN}remnanode -> volumes${NC} добавьте проброс баз и логов:\n"
     echo -e "${CYAN} - /var/log/remnanode:/var/log/remnanode
  - ${BASE_DIR}/xray/share/zapret.dat:/usr/local/bin/zapret.dat
  - ${BASE_DIR}/xray/share/mygeoip.dat:/usr/local/share/xray/mygeoip.dat
  - ${BASE_DIR}/xray/share/mygeosite.dat:/usr/local/share/xray/mygeosite.dat${NC}\n"
 
     echo -e "${GREEN}${BOLD} [ШАГ 3] Использование в Routing (Примеры)${NC}"
-    echo -e " Для ${YELLOW}Антизапрет${NC}: \"ext:zapret.dat:zapret\""
-    echo -e " Для ${YELLOW}То что недоступно в РФ${NC}: \"ext:zapret.dat:zapret-zapad\""
-    echo -e " Для ${YELLOW}Roblox${NC}:      \"ext:mygeosite.dat:ROBLOX\""
-    echo -e " Для ${YELLOW}Telegram${NC}:    \"ext:mygeosite.dat:TELEGRAM\" и \"ext:mygeoip.dat:TELEGRAM\"\n"
+    echo -e " Для ${YELLOW}Антизапрет${NC}:           \"ext:zapret.dat:zapret\""
+    echo -e " Для ${YELLOW}Недоступно в РФ${NC}:      \"ext:zapret.dat:zapret-zapad\""
+    echo -e " Для ${YELLOW}Roblox${NC}:               \"ext:mygeosite.dat:ROBLOX\""
+    echo -e " Для ${YELLOW}Telegram${NC}:             \"ext:mygeosite.dat:TELEGRAM\" и \"ext:mygeoip.dat:TELEGRAM\"\n"
 
-    echo -e "${MAGENTA}======================================================================${NC}"
+    echo -e "${BLUE}======================================================${NC}"
+    echo -e "${YELLOW} 💡 После настройки перезапустите контейнер:${NC}"
+    echo -e "${CYAN}    docker compose down && docker compose up -d${NC}"
+    echo -e "${BLUE}======================================================${NC}"
     pause
 }
 

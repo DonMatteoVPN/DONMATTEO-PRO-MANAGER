@@ -3,9 +3,11 @@
 
 show_prereq_instructions() {
     clear
-    echo -e "${MAGENTA}======================================================================${NC}"
-    echo -e "${BOLD}${YELLOW} ⚠️  МЕГА-РУКОВОДСТВО: REALITY + XHTTP + ИДЕАЛЬНАЯ ЗАЩИТА ⚠️${NC}"
-    echo -e "${MAGENTA}======================================================================${NC}"
+    echo -e "${BLUE}======================================================${NC}"
+    echo -e "${BOLD}${MAGENTA}  📖 ИНСТРУКЦИЯ: НАСТРОЙКА NGINX + XRAY${NC}"
+    echo -e "${BLUE}======================================================${NC}"
+    echo -e "${GRAY} Настройте Reality + XHTTP + защиту от сканеров.${NC}"
+    echo -e "${BLUE}======================================================${NC}\n"
     
     echo -e "${CYAN}${BOLD}КАК ЭТО РАБОТАЕТ (ЛОГИКА ПОТОКОВ):${NC}"
     echo -e " 1. ${GREEN}REALITY:${NC} Клиент стучится на 443 -> Xray узнает его и пускает сразу."
@@ -21,37 +23,39 @@ show_prereq_instructions() {
 
     echo -e "${GREEN}${BOLD} [ШАГ 2] НАСТРОЙКА DOCKER (${YELLOW}docker-compose.yml${GREEN})${NC}"
     echo -e " Нужно вынести логи из контейнера наружу для Fail2Ban."
-    echo -e " В блоке ${CYAN}volumes:${NC} для контейнера ${CYAN}remnawave-nginx${NC} добавьте:"
-    echo -e " ${GREEN}- ${BASE_DIR}/nginx_logs:/var/log/nginx_custom${NC}\n"
+    echo -e " В блоке ${CYAN}volumes:${NC} для контейнера ${CYAN}remnawave-nginx${NC} добавьте:\n"
+    echo -e "${CYAN} - ${BASE_DIR}/nginx_logs:/var/log/nginx_custom${NC}\n"
 
     echo -e "${GREEN}${BOLD} [ШАГ 3] НАСТРОЙКА NGINX (${YELLOW}nginx.conf${GREEN})${NC}"
     echo -e " Ваш конфиг должен состоять из двух главных частей:\n"
     
     echo -e " ${BOLD}А) СНАРУЖИ (Блок stream) — Сортировщик и Лог сканеров:${NC}"
-    echo -e " ${GRAY}Этот блок должен быть ВНЕ блока http (обычно в самом начале файла)${NC}"
+    echo -e " ${GRAY}Этот блок должен быть ВНЕ блока http (обычно в самом начале файла)${NC}\n"
     echo -e "${CYAN} stream {
-    log_format stream_routing '\$proxy_protocol_addr[\$time_local] SNI:\"\$ssl_preread_server_name\" RoutedTo:\"\$route_to\"';
-    access_log /var/log/nginx_custom/stream_scanners.log stream_routing;
-    
-    map \$ssl_preread_server_name \$route_to {
-        ваш.домен.com    unix:/dev/shm/nginx_http.sock;
-        default          unix:/dev/shm/nginx_external.sock;
-    }
-    # ... далее блоки upstream и server ...
- }${NC}\n"
+     log_format stream_routing '\$proxy_protocol_addr[\$time_local] SNI:\"\$ssl_preread_server_name\" RoutedTo:\"\$route_to\"';
+     access_log /var/log/nginx_custom/stream_scanners.log stream_routing;
+     
+     map \$ssl_preread_server_name \$route_to {
+         ваш.домен.com    unix:/dev/shm/nginx_http.sock;
+         default          unix:/dev/shm/nginx_external.sock;
+     }
+     # ... далее блоки upstream и server ...
+  }${NC}\n"
 
     echo -e " ${BOLD}Б) ВНУТРИ (Блок http -> server) — Ваш сайт и XHTTP:${NC}"
-    echo -e " Внутри ${CYAN}server { ... }${NC} обязательно пропишите эти пути:"
-    echo -e " ${GREEN}listen unix:/dev/shm/nginx_http.sock proxy_protocol ssl;${NC}"
-    echo -e " ${GREEN}set_real_ip_from unix:; real_ip_header proxy_protocol;${NC}"
-    echo -e " ${GREEN}access_log /var/log/nginx_custom/access.log;${NC}"
-    echo -e " ${GREEN}error_log  /var/log/nginx_custom/error.log;${NC}\n"
+    echo -e " Внутри ${CYAN}server { ... }${NC} обязательно пропишите эти пути:\n"
+    echo -e "${CYAN} listen unix:/dev/shm/nginx_http.sock proxy_protocol ssl;
+ set_real_ip_from unix:; real_ip_header proxy_protocol;
+ access_log /var/log/nginx_custom/access.log;
+ error_log  /var/log/nginx_custom/error.log;${NC}\n"
 
-    echo -e "${MAGENTA}======================================================================${NC}"
-    echo -e "${YELLOW} ПРОВЕРКА: Если файлы ${BASE_DIR}/nginx_logs/access.log и stream_scanners.log${NC}"
-    echo -e "${YELLOW} начали заполняться - значит всё настроено ВЕРНО!${NC}"
-    echo -e "${CYAN} Команда для перезапуска: docker compose down && docker compose up -d${NC}"
-    echo -e "${MAGENTA}======================================================================${NC}"
+    echo -e "${BLUE}======================================================${NC}"
+    echo -e "${YELLOW} 💡 ПРОВЕРКА: Если файлы начали заполняться - всё ОК!${NC}"
+    echo -e "${CYAN}    ${BASE_DIR}/nginx_logs/access.log${NC}"
+    echo -e "${CYAN}    ${BASE_DIR}/nginx_logs/stream_scanners.log${NC}\n"
+    echo -e "${YELLOW} 🔄 Команда для перезапуска:${NC}"
+    echo -e "${CYAN}    docker compose down && docker compose up -d${NC}"
+    echo -e "${BLUE}======================================================${NC}"
     pause
 }
 
