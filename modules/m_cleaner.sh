@@ -66,11 +66,11 @@ inspect_directory() {
         clear; echo -e "${MAGENTA}=== ИЗУЧЕНИЕ ДИРЕКТОРИИ ===${NC}"
         echo -e "${CYAN}Текущая папка:${NC} $DIR\n${GRAY}Топ-10 самых тяжелых элементов внутри:${NC}\n"
         du -sh "$DIR"/* 2>/dev/null | sort -hr | head -10 > /tmp/ad_tmp.txt
-        if[ ! -s /tmp/ad_tmp.txt ]; then echo -e "  ${GRAY}(Пусто или нет прав доступа)${NC}"; declare -a PATHS=(); else
+        if [ ! -s /tmp/ad_tmp.txt ]; then echo -e "  ${GRAY}(Пусто или нет прав доступа)${NC}"; declare -a PATHS=(); else
             local i=1; declare -a PATHS; declare -a TYPES
             while read -r line; do
                 local size=$(echo "$line" | awk '{print $1}'); local fpath=$(echo "$line" | cut -f2-); local fname=$(basename "$fpath")
-                if[ -d "$fpath" ]; then echo -e "  ${YELLOW}[$i]${NC} 📁 ${CYAN}${size}${NC}\t $fname/"; TYPES[$i]="dir"; else echo -e "  ${YELLOW}[$i]${NC} 📄 ${GREEN}${size}${NC}\t $fname"; TYPES[$i]="file"; fi
+                if [ -d "$fpath" ]; then echo -e "  ${YELLOW}[$i]${NC} 📁 ${CYAN}${size}${NC}\t $fname/"; TYPES[$i]="dir"; else echo -e "  ${YELLOW}[$i]${NC} 📄 ${GREEN}${size}${NC}\t $fname"; TYPES[$i]="file"; fi
                 PATHS[$i]="$fpath"; ((i++))
             done < /tmp/ad_tmp.txt; rm -f /tmp/ad_tmp.txt
         fi
