@@ -26,7 +26,7 @@ ensure_rsyslog() {
         sleep 2
     fi
     if ! systemctl is-active --quiet rsyslog; then systemctl start rsyslog; fi
-    if[ ! -f /var/log/ufw.log ]; then touch /var/log/ufw.log; chmod 640 /var/log/ufw.log; chown syslog:adm /var/log/ufw.log; fi
+    if [ ! -f /var/log/ufw.log ]; then touch /var/log/ufw.log; chmod 640 /var/log/ufw.log; chown syslog:adm /var/log/ufw.log; fi
 }
 
 # --- АВТОМАТИЧЕСКИЙ СКАНЕР ОТКРЫТЫХ ПОРТОВ ---

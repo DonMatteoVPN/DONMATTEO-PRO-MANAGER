@@ -182,7 +182,7 @@ f2b_unban() {
         echo -e "\nВыберите ${YELLOW}НОМЕР${NC} для разблокировки или ${YELLOW}0${NC} для выхода:"
         read -p ">> " ch
         [[ "$ch" == "0" || -z "$ch" ]] && return
-        if [[ "$ch" =~ ^[0-9]+$ ]] && [ "$ch" -lt "$i" ] &&[ "$ch" -gt 0 ]; then
+        if [[ "$ch" =~ ^[0-9]+$ ]] && [ "$ch" -lt "$i" ] && [ "$ch" -gt 0 ]; then
             local TARGET_IP="${BAN_IP_ARRAY[$ch]}"
             local TARGET_JAIL="${BAN_JAIL_ARRAY[$ch]}"
             fail2ban-client set "$TARGET_JAIL" unbanip "$TARGET_IP" >/dev/null 2>&1
@@ -208,7 +208,7 @@ f2b_whitelist() {
         read -p ">> " ch
         case $ch in
             1) read -p "Впишите IP: " ip; [[ $ip =~ ^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$ ]] && { read -p "Описание: " name; echo "$ip # $name" >> "$WHITELIST_FILE"; install_fail2ban >/dev/null 2>&1; ufw_global_setup >/dev/null 2>&1; echo -e "${GREEN}Добавлен в исключения!${NC}"; }; sleep 1 ;;
-            2) read -p "Впишите НОМЕР: " num; [[ "$num" =~ ^[0-9]+$ ]] &&[ "$num" -lt "$i" ] && [ "$num" -gt 0 ] && { grep -v -x -F "${WL_ARRAY[$num]}" "$WHITELIST_FILE" > /tmp/wl_tmp && mv /tmp/wl_tmp "$WHITELIST_FILE"; install_fail2ban >/dev/null 2>&1; ufw_global_setup >/dev/null 2>&1; echo -e "${GREEN}Удалено.${NC}"; }; sleep 1 ;;
+            2) read -p "Впишите НОМЕР: " num; [[ "$num" =~ ^[0-9]+$ ]] && [ "$num" -lt "$i" ] && [ "$num" -gt 0 ] && { grep -v -x -F "${WL_ARRAY[$num]}" "$WHITELIST_FILE" > /tmp/wl_tmp && mv /tmp/wl_tmp "$WHITELIST_FILE"; install_fail2ban >/dev/null 2>&1; ufw_global_setup >/dev/null 2>&1; echo -e "${GREEN}Удалено.${NC}"; }; sleep 1 ;;
             0) return ;;
         esac
     done

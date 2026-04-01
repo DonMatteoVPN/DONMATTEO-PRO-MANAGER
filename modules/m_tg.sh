@@ -48,7 +48,7 @@ tg_install() {
     smart_apt_install "whois" || return 1
     
     echo -e "\n${YELLOW}[*] Предустановка Grafana (обход блокировок)...${NC}"
-    install_grafana_mirror || { echo -e "${RED}[!] Ошибка установки Grafana.${NC}"; pause; return; }
+    install_grafana_mirror || echo -e "${YELLOW}[!] Grafana не установлена — продолжаем без неё (необязательный компонент).${NC}"
 
     systemctl enable --now rsyslog
 

@@ -79,7 +79,7 @@ inspect_directory() {
         echo -e " Введите ${YELLOW}НОМЕР${NC} чтобы открыть, или ${CYAN}0${NC} для возврата."
         read -p ">> " choice
         [[ "$choice" == "0" || -z "$choice" ]] && return
-        if [[ "$choice" =~ ^[0-9]+$ ]] &&[ "$choice" -lt "$i" ] && [ "$choice" -gt 0 ]; then
+        if [[ "$choice" =~ ^[0-9]+$ ]] && [ "$choice" -lt "$i" ] && [ "$choice" -gt 0 ]; then
             local TARGET="${PATHS[$choice]}"; local TYPE="${TYPES[$choice]}"
             [[ "$TYPE" == "dir" ]] && inspect_directory "$TARGET" "$IS_SAFE_RM" || file_interaction "$TARGET" "$IS_SAFE_RM"
         else echo -e "${RED}Неверный ввод.${NC}"; sleep 1; fi
@@ -107,6 +107,40 @@ analyze_disk() {
             0) return ;;
         esac
     done
+}
+
+
+clean_journal() {
+    journalctl --vacuum-time=3d
+    journalctl --vacuum-size=200M
+}
+
+clean_apt() {
+    apt-get clean
+    apt-get autoremove --purge -y
+}
+
+clean_docker() {
+    if command -v docker &>/dev/null; then
+        docker system prune -a -f
+    else
+        echo -e "${YELLOW}[!] Docker не установлен на этом сервере.${NC}"
+    fi
+}
+
+clean_tmp() {
+    rm -rf /tmp/* /var/tmp/* ~/.cache/* 2>/dev/null || true
+}
+
+clean_snap() {
+    if command -v snap &>/dev/null; then
+        snap set system refresh.retain=2 2>/dev/null || true
+        while read -r snapname revision; do
+            [[ -n "$snapname" ]] && snap remove "$snapname" --revision="$revision"
+        done < <(snap list all 2>/dev/null | awk '/disabled/{print $1, $3}')
+    else
+        echo -e "${YELLOW}[!] Snap не установлен на этом сервере.${NC}"
+    fi
 }
 
 clean_all_funcs() {
@@ -209,7 +243,7 @@ lr_auto_scan() {
         echo -e "${GREEN}[+] Успешно! Взято под управление: $added папок${NC}"; pause; return
     fi
 
-    if [[ "$c_scan" =~ ^[0-9]+$ ]] &&[ "$c_scan" -lt "$i" ] && [ "$c_scan" -gt 0 ]; then
+    if [[ "$c_scan" =~ ^[0-9]+$ ]] && [ "$c_scan" -lt "$i" ] && [ "$c_scan" -gt 0 ]; then
         local TARGET_DIR="${DIRS_ARRAY[$c_scan]}"
         if grep -qr "$TARGET_DIR" /etc/logrotate.d/ 2>/dev/null; then
             echo -e "${YELLOW}Для этой папки уже есть правило. Сначала удалите его в меню управления.${NC}"; sleep 2; return
@@ -278,7 +312,7 @@ lr_manage_rules() {
             else
                 echo -e "${YELLOW}[!] Отменено.${NC}"; sleep 1
             fi
-        elif [[ "$d_ch" =~ ^[0-9]+$ ]] && [ "$d_ch" -lt "$i" ] &&[ "$d_ch" -gt 0 ]; then
+        elif [[ "$d_ch" =~ ^[0-9]+$ ]] && [ "$d_ch" -lt "$i" ] && [ "$d_ch" -gt 0 ]; then
             rm -f "${RULE_FILES[$d_ch]}"
             echo -e "${GREEN}Правило удалено!${NC}"; sleep 1
         fi
@@ -317,7 +351,7 @@ lr_set_global_limits() {
             echo -e "\n${CYAN}[*] Применяем новые лимиты ко всем правилам...${NC}"
             local updated=0
             for r_file in /etc/logrotate.d/don_*; do
-                if[ -f "$r_file" ]; then
+                if [ -f "$r_file" ]; then
                     sed -i "s/size .*/size $current_size/" "$r_file"
                     sed -i "s/rotate .*/rotate $current_count/" "$r_file"
                     ((updated++))

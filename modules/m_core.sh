@@ -195,7 +195,7 @@ smart_apt_install() {
     for lock in "${lock_files[@]}"; do
         if [[ -e "$lock" ]]; then
             local count=0
-            while fuser "$lock" >/dev/null 2>&1 &&[ $count -lt $max_wait ]; do
+            while fuser "$lock" >/dev/null 2>&1 && [ $count -lt $max_wait ]; do
                 echo -ne "\r${YELLOW}[!] Ждем освобождения APT ($(basename $lock))... $count/$max_wait сек${NC}     "
                 sleep 3; ((count+=3))
             done

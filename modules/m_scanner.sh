@@ -122,8 +122,8 @@ run_single_scan() {
             REPORT_OUTPUT+="   └─ Сайт хостинга:   https://${base_domain} (из PTR: $host_name)${nl}"
         fi
         
-        if [[ -n "$org_info" ]]; then
-            local search_query=$(echo "buy vps $org_info" | sed 's/ /+/g')
+        if [[ -n "$provider" ]]; then
+            local search_query=$(echo "buy vps $provider" | sed 's/ /+/g')
             REPORT_OUTPUT+="   └─ Резервный поиск: https://www.google.com/search?q=${search_query}${nl}"
         fi
         REPORT_OUTPUT+="------------------------------------------------------${nl}"
