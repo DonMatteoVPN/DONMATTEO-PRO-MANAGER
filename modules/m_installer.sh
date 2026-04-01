@@ -63,6 +63,11 @@ show_prereq_instructions() {
          root /var/www/html; index index.html; location / { try_files \$uri \$uri/ =404; }
      }
   }${NC}\n"
+
+    echo -e "${MAGENTA}${BOLD} [ШАГ 4] ГИБРИДНАЯ ПАМЯТЬ (ZRAM + SWAP)${NC}"
+    echo -e " ${CYAN}ZRAM (Приоритет 100):${NC} Быстрое сжатие в ОЗУ. Используется в первую очередь."
+    echo -e " ${CYAN}Swap (Приоритет -2):${NC} Файл на диске. Используется только если ZRAM переполнен."
+    echo -e " ${YELLOW}Это защищает сервер от «падения» при резких скачках нагрузки.${NC}\n"
     pause
 }
 
@@ -238,6 +243,10 @@ install_all() {
         lr_auto_setup
         echo -e "${GREEN}[+] Логи Nginx и Ноды взяты под контроль.${NC}"
     fi
+
+    if declare -f install_hybrid_memory_optimization > /dev/null; then
+        install_hybrid_memory_optimization
+    fi
     pause
 }
 
@@ -249,16 +258,17 @@ install_menu() {
         echo -e "${BLUE}======================================================${NC}"
         echo -e " ${CYAN}Перед установкой защиты убедитесь, что ваш Nginx и Xray${NC}"
         echo -e " ${CYAN}настроены на передачу IP-адресов. Иначе защита не сработает!${NC}"
-        echo -e " ${YELLOW}👉 Нажмите [6], чтобы прочитать инструкцию.${NC}"
+        echo -e " ${YELLOW}👉 Нажмите [7], чтобы прочитать инструкцию.${NC}"
         echo -e "${BLUE}======================================================${NC}"
-        echo -e " ${GREEN}${BOLD}1.${NC} 🚀 ${BOLD}Установить ВСЁ сразу${NC} ${GRAY}(Sysctl + UFW + Fail2Ban + Logrotate)${NC}"
+        echo -e " ${GREEN}${BOLD}1.${NC} 🚀 ${BOLD}Установить ВСЁ сразу${NC} ${GRAY}(Sysctl + UFW + Fail2Ban + Swap)${NC}"
         echo -e "${BLUE}------------------------------------------------------${NC}"
         echo -e " ${YELLOW}2.${NC} Только защита ядра (Sysctl)               $(get_sysctl_status)"
         echo -e " ${YELLOW}3.${NC} Только инициализация UFW                   $(get_ufw_status)"
         echo -e " ${YELLOW}4.${NC} Только установка Fail2Ban (фильтры)      $(get_f2b_status)"
         echo -e " ${YELLOW}5.${NC} Только настройка ротации логов             $(get_logrotate_status)"
+        echo -e " ${YELLOW}6.${NC} Оптимизация памяти (ZRAM + Swap)           $(get_swap_status)"
         echo -e "${BLUE}------------------------------------------------------${NC}"
-        echo -e " ${MAGENTA}${BOLD}6. 📖 ПОКАЗАТЬ ИНСТРУКЦИЮ ПО НАСТРОЙКЕ NGINX${NC}"
+        echo -e " ${MAGENTA}${BOLD}7. 📖 ПОКАЗАТЬ ИНСТРУКЦИЮ ПО НАСТРОЙКЕ NGINX${NC}"
         echo -e " ${CYAN}0.${NC} ↩️  Назад"
         read -rp ">> " choice
         case $choice in
@@ -281,7 +291,14 @@ install_menu() {
                     echo -e "${RED}[!] Модуль очистки не загружен.${NC}"; sleep 2
                 fi
                 ;;
-            6) show_prereq_instructions ;;
+            6)
+                if declare -f manage_swap > /dev/null; then
+                    manage_swap
+                else
+                    echo -e "${RED}[!] Модуль памяти не загружен.${NC}"; sleep 2
+                fi
+                ;;
+            7) show_prereq_instructions ;;
             0) return ;;
             *) echo -e "${RED}Ошибка: Неверный выбор.${NC}"; sleep 1 ;;
         esac

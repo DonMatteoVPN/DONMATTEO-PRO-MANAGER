@@ -3,8 +3,11 @@
 get_swap_status() {
     local swp=$(free -m | awk '/^Swap:/ {print $2}')
     local has_zram=$(lsblk 2>/dev/null | grep -i zram)
+    local has_file=$(swapon --show --noheadings 2>/dev/null | grep -i "/swapfile")
     
-    if [[ -n "$has_zram" ]]; then
+    if [[ -n "$has_zram" && -n "$has_file" ]]; then
+        echo -e "${GREEN}[ГИБРИД: ZRAM + Disk Swap]${NC}"
+    elif [[ -n "$has_zram" ]]; then
         echo -e "${GREEN}[ZRAM ВКЛЮЧЕН: ${swp} MB]${NC}"
     elif [[ "$swp" != "0" && -n "$swp" ]]; then 
         echo -e "${YELLOW}[DISK SWAP: ${swp} MB]${NC}"
@@ -124,6 +127,40 @@ EOF
     systemctl enable zramswap >/dev/null 2>&1
     
     echo -e "\n${GREEN}[+] ZRAM успешно активирован! Ваша ОЗУ теперь сжимается на лету.${NC}"
+}
+
+# --- ГИБРИДНАЯ ОПТИМИЗАЦИЯ (ZRAM + SWAP) ---
+install_hybrid_memory_optimization() {
+    echo -e "${CYAN}[*] Настройка гибридной памяти (ZRAM + Disk Swap)...${NC}"
+    
+    # 1. Сначала ZRAM (50% RAM, высокий приоритет)
+    apt-get update -y >/dev/null 2>&1
+    smart_apt_install "zram-tools" "bc" >/dev/null 2>&1
+    
+    cat << EOF > /etc/default/zramswap
+ALGO=lz4
+PERCENT=50
+PRIORITY=100
+EOF
+    systemctl restart zramswap >/dev/null 2>&1
+    systemctl enable zramswap >/dev/null 2>&1
+
+    # 2. Затем Disk Swap (2GB, низкий приоритет -2)
+    if [[ ! -f /swapfile ]]; then
+        echo -e "${YELLOW}[*] Создание файла подкачки 2GB в качестве страховки...${NC}"
+        fallocate -l 2G /swapfile 2>/dev/null || dd if=/dev/zero of=/swapfile bs=1M count=2048
+        chmod 600 /swapfile
+        mkswap /swapfile >/dev/null 2>&1
+        swapon -p -2 /swapfile 2>/dev/null || swapon /swapfile
+        grep -qE '^/swapfile\s' /etc/fstab || echo '/swapfile none swap sw,pri=-2 0 0' | tee -a /etc/fstab
+    else
+        # Если файл есть, просто убеждаемся что приоритет верный
+        swapoff /swapfile 2>/dev/null
+        swapon -p -2 /swapfile 2>/dev/null
+        sed -i 's/.*\/swapfile.*/\/swapfile none swap sw,pri=-2 0 0/' /etc/fstab
+    fi
+    
+    echo -e "${GREEN}[✓] Гибридная память настроена: ZRAM (Priority 100) + Disk Swap (Priority -2).${NC}"
 }
 
 make_swap() {
