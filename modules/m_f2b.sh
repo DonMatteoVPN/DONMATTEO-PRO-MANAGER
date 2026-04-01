@@ -6,6 +6,10 @@
 [[ ! -f "$F2B_BAN_FILE" ]] && echo "24h" > "$F2B_BAN_FILE"
 [[ ! -f "$WHITELIST_FILE" ]] && touch "$WHITELIST_FILE"
 
+get_f2b_status() {
+    if systemctl is-active --quiet fail2ban; then echo -e "${GREEN}[РАБОТАЕТ]${NC}"; else echo -e "${RED}[ВЫКЛЮЧЕН]${NC}"; fi
+}
+
 install_fail2ban() {
     echo -e "${CYAN}[*] Настройка конфигурации Fail2Ban...${NC}"
     
@@ -34,15 +38,22 @@ install_fail2ban() {
 
     cat << 'EOF' > /etc/fail2ban/filter.d/nginx-scanners.conf
 [Definition]
-failregex = ^<HOST> \- \- \[.*\] "(GET|POST|HEAD|PROPFIND|OPTIONS|PUT|DELETE).*?" (400|401|403|404|405|444)
-            ^<HOST>\s*\[[^\]]+\]\s*SNI:".*?"\s*RoutedTo:"unix:/dev/shm/nginx_external\.sock"
-ignoreregex =
+failregex = ^<HOST> \- \- \[.*\] "(GET|POST|HEAD|PROPFIND|OPTIONS|PUT|DELETE).*?" (400|401|403|404|405|444) 
+ignoreregex = 
 EOF
 
     local ACTIVE_SSH=$(grep -i "^Port" /etc/ssh/sshd_config | awk '{print $2}' | paste -sd "," -)
     [[ -z "$ACTIVE_SSH" ]] && ACTIVE_SSH="22"
 
-    cat << EOF > /etc/fail2ban/jail.local
+    [[ -f /etc/fail2ban/jail.conf ]] && cp -f /etc/fail2ban/jail.conf /etc/fail2ban/jail.local
+
+    # Удаляем старые блоки если они есть в jail.local, чтобы не дублировать
+    sed -i '/^# --- DONMATTEO JAILS ---$/,/^# --- END DONMATTEO JAILS ---$/d' /etc/fail2ban/jail.local 2>/dev/null || true
+
+    # Добавляем наши правила в конец полноценного jail.local
+    cat << EOF >> /etc/fail2ban/jail.local
+
+# --- DONMATTEO JAILS ---
 [DEFAULT]
 banaction = ufw
 ignoreip = 127.0.0.1/8 ::1 ${WL_IPS}
@@ -65,6 +76,7 @@ logpath  = /opt/remnawave/nginx_logs/access.log
 maxretry = ${CUR_RETRY}
 findtime = ${CUR_FIND}
 bantime  = ${CUR_BAN}
+# --- END DONMATTEO JAILS ---
 EOF
 
     systemctl enable fail2ban > /dev/null 2>&1
