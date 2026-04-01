@@ -70,7 +70,7 @@ inspect_directory() {
             local i=1; declare -a PATHS; declare -a TYPES
             while read -r line; do
                 local size=$(echo "$line" | awk '{print $1}'); local fpath=$(echo "$line" | cut -f2-); local fname=$(basename "$fpath")
-                if [ -d "$fpath" ]; then echo -e "  ${YELLOW}[$i]${NC} 📁 ${CYAN}${size}${NC}\t $fname/"; TYPES[$i]="dir"; else echo -e "  ${YELLOW}[$i]${NC} 📄 ${GREEN}${size}${NC}\t $fname"; TYPES[$i]="file"; fi
+                if[ -d "$fpath" ]; then echo -e "  ${YELLOW}[$i]${NC} 📁 ${CYAN}${size}${NC}\t $fname/"; TYPES[$i]="dir"; else echo -e "  ${YELLOW}[$i]${NC} 📄 ${GREEN}${size}${NC}\t $fname"; TYPES[$i]="file"; fi
                 PATHS[$i]="$fpath"; ((i++))
             done < /tmp/ad_tmp.txt; rm -f /tmp/ad_tmp.txt
         fi
@@ -79,7 +79,7 @@ inspect_directory() {
         echo -e " Введите ${YELLOW}НОМЕР${NC} чтобы открыть, или ${CYAN}0${NC} для возврата."
         read -p ">> " choice
         [[ "$choice" == "0" || -z "$choice" ]] && return
-        if [[ "$choice" =~ ^[0-9]+$ ]] && [ "$choice" -lt "$i" ] &&[ "$choice" -gt 0 ]; then
+        if [[ "$choice" =~ ^[0-9]+$ ]] &&[ "$choice" -lt "$i" ] && [ "$choice" -gt 0 ]; then
             local TARGET="${PATHS[$choice]}"; local TYPE="${TYPES[$choice]}"
             [[ "$TYPE" == "dir" ]] && inspect_directory "$TARGET" "$IS_SAFE_RM" || file_interaction "$TARGET" "$IS_SAFE_RM"
         else echo -e "${RED}Неверный ввод.${NC}"; sleep 1; fi
