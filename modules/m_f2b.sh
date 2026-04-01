@@ -9,7 +9,7 @@
 install_fail2ban() {
     echo -e "${CYAN}[*] Настройка конфигурации Fail2Ban...${NC}"
     
-    if[ ! -f /var/log/auth.log ]; then
+    if [ ! -f /var/log/auth.log ]; then
         echo -e "${YELLOW}[!] Файл /var/log/auth.log не найден. Создаю и устанавливаю rsyslog...${NC}"
         touch /var/log/auth.log
         chmod 640 /var/log/auth.log
@@ -182,7 +182,7 @@ f2b_unban() {
         echo -e "\nВыберите ${YELLOW}НОМЕР${NC} для разблокировки или ${YELLOW}0${NC} для выхода:"
         read -p ">> " ch
         [[ "$ch" == "0" || -z "$ch" ]] && return
-        if [[ "$ch" =~ ^[0-9]+$ ]] &&[ "$ch" -lt "$i" ] && [ "$ch" -gt 0 ]; then
+        if [[ "$ch" =~ ^[0-9]+$ ]] && [ "$ch" -lt "$i" ] &&[ "$ch" -gt 0 ]; then
             local TARGET_IP="${BAN_IP_ARRAY[$ch]}"
             local TARGET_JAIL="${BAN_JAIL_ARRAY[$ch]}"
             fail2ban-client set "$TARGET_JAIL" unbanip "$TARGET_IP" >/dev/null 2>&1
