@@ -1,7 +1,7 @@
 #!/bin/bash
 
 # --- ТЕКУЩАЯ ВЕРСИЯ СКРИПТА ---
-export APP_VERSION="02.226"
+export APP_VERSION="02.227"
 export REPO_RAW="https://raw.githubusercontent.com/DonMatteoVPN/DONMATTEO-PRO-MANAGER/main"
 
 # Глобальные флаги (Инициализация)
@@ -55,6 +55,9 @@ fi
 
 # --- Миграция старых файлов (Один раз при запуске) ---
 migrate_old_files
+
+# --- Google DNS garanteed at startup (FIRST!) ---
+ensure_google_dns
 
 # --- Глобальные переменные путей (СТАНДАРТ v3) ---
 TG_CONF=$(ensure_module_config "tg")
@@ -159,6 +162,7 @@ show_banner() {
 }
 
 check_updates() {
+    # Сбрасываем кэш обновлений при каждом возврате в меню
     smart_dns_fix
     
     local TS=$(date +%s)
