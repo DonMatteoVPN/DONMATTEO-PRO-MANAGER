@@ -1,7 +1,7 @@
 #!/bin/bash
 
 # --- ТЕКУЩАЯ ВЕРСИЯ СКРИПТА ---
-export APP_VERSION="02.125"
+export APP_VERSION="02.222" # <--- ВЕРСИЯ ПОВЫШЕНА ДЛЯ АВТООБНОВЛЕНИЯ ВСЕХ НОД!
 export REPO_RAW="https://raw.githubusercontent.com/DonMatteoVPN/DONMATTEO-PRO-MANAGER/main"
 
 # Глобальные флаги (Инициализация)
@@ -47,7 +47,6 @@ export OLD_BASE="/opt/remnawave"
 if [[ -f "${BASE_DIR}/modules/m_core.sh" ]]; then
     source "${BASE_DIR}/modules/m_core.sh"
 elif [[ -f "${OLD_BASE}/modules/m_core.sh" ]]; then
-    # Если мы еще в старом месте — подгружаем оттуда, миграция случится ниже
     source "${OLD_BASE}/modules/m_core.sh"
 else
     echo -e "${RED}[!] КРИТИЧЕСКАЯ ОШИБКА: Ядро m_core.sh не найдено.${NC}"
@@ -57,7 +56,7 @@ fi
 # --- Миграция старых файлов (Один раз при запуске) ---
 migrate_old_files
 
-# --- Глобальные переменные путей (СТАНДАРТ v2) ---
+# --- Глобальные переменные путей (СТАНДАРТ v3) ---
 TG_CONF=$(ensure_module_config "tg")
 export TG_URL_FILE="${TG_CONF}/url.txt"
 export TG_LISTS_FILE="${TG_CONF}/lists.txt"
@@ -126,7 +125,8 @@ get_tg_status() {
 }
 get_swap_status() {
     local swp=$(free -m 2>/dev/null | awk '/^Swap:/ {print $2}')
-    if [[ "$swp" != "0" && -n "$swp" ]]; then echo -e "${GREEN}[ВКЛЮЧЕНО: ${swp} MB]${NC}"; else echo -e "${RED}[ВЫКЛЮЧЕН]${NC}"; fi
+    local has_zram=$(lsblk 2>/dev/null | grep -i zram)
+    if [[ -n "$has_zram" ]]; then echo -e "${GREEN}[ZRAM ВКЛЮЧЕН]${NC}"; elif [[ "$swp" != "0" && -n "$swp" ]]; then echo -e "${YELLOW}[DISK SWAP ВКЛЮЧЕН]${NC}"; else echo -e "${RED}[ВЫКЛЮЧЕН]${NC}"; fi
 }
 get_ssh_status() {
     if [[ "${OS_TYPE:-}" == "macos" ]]; then echo -e "${YELLOW}[N/A]${NC}"; return; fi
@@ -154,7 +154,7 @@ show_banner() {
     echo -e "                                                      "
     echo -e "${RED}${BOLD}              ОТ РЕШАЛЫ С ЛЮБОВЬЮ БЛЯТЬ         ${NC}"
     echo -e "${CYAN}======================================================${NC}"
-    echo -e " ${GRAY}Версия ядра: v${APP_VERSION} (STD)${NC}"
+    echo -e " ${GRAY}Версия ядра: v${APP_VERSION} (PRO)${NC}"
     echo -e "${CYAN}======================================================${NC}"
 }
 
@@ -168,7 +168,6 @@ check_updates() {
     local TEMP_VER="/tmp/ver_check_${TS}.txt"
     local REMOTE_VERSION=""
     
-    # 1. GitHub API (Получаем последний коммит для гарантии свежести)
     local COMMIT_SHA=$(curl -fsSL --connect-timeout 2 --max-time 3 \
         -H "Cache-Control: no-cache, no-store, must-revalidate" \
         -H "Pragma: no-cache" \
@@ -176,7 +175,6 @@ check_updates() {
         "https://api.github.com/repos/DonMatteoVPN/DONMATTEO-PRO-MANAGER/commits/main" 2>/dev/null | \
         grep -oP '"sha":\s*"\K[^"]+' | head -n1)
     
-    # 2. Если получили SHA - качаем напрямую по коммиту (обход всех кэшей)
     if [[ -n "$COMMIT_SHA" && ${#COMMIT_SHA} -eq 40 ]]; then
         local COMMIT_URL="https://raw.githubusercontent.com/DonMatteoVPN/DONMATTEO-PRO-MANAGER/${COMMIT_SHA}/don"
         if curl -fsSL --connect-timeout 2 --max-time 5 \
@@ -187,7 +185,6 @@ check_updates() {
         fi
     fi
     
-    # 3. Fallback: GitHub Raw с агрессивным обходом кэша
     if [[ -z "$REMOTE_VERSION" ]]; then
         local RAW_URL="https://raw.githubusercontent.com/DonMatteoVPN/DONMATTEO-PRO-MANAGER/main/don?${BUSTER}"
         if curl -fsSL --connect-timeout 2 --max-time 5 \
@@ -199,9 +196,7 @@ check_updates() {
         fi
     fi
 
-    # 4. Последний Fallback: jsDelivr с purge
     if [[ -z "$REMOTE_VERSION" ]]; then
-        # Сначала пытаемся очистить кэш jsDelivr
         curl -fsSL --connect-timeout 1 --max-time 2 \
             "https://purge.jsdelivr.net/gh/DonMatteoVPN/DONMATTEO-PRO-MANAGER@main/don" >/dev/null 2>&1
         
@@ -238,7 +233,6 @@ main_menu() {
         echo -e "${GRAY}Все сообщения об ошибках и детальный вывод команд включены.${NC}\n"
     fi
 
-    # Проверка обновлений ОДИН раз при запуске меню
     check_updates
 
     while true; do
@@ -257,7 +251,7 @@ main_menu() {
         echo -e " ${YELLOW}2.${NC} 🔑 Управление SSH (Порты)\e[40G${NC}$(get_ssh_status)"
         echo -e " ${YELLOW}3.${NC} 👮 Защита (Fail2Ban & Whitelist)\e[40G${NC}$(get_f2b_status)"
         echo -e " ${YELLOW}4.${NC} 🚦 TrafficGuard PRO\e[40G${NC}$(get_tg_status)"
-        echo -e " ${YELLOW}5.${NC} ⚙️ Настройки (Swap / Память)\e[40G${NC}$(get_swap_status)"
+        echo -e " ${YELLOW}5.${NC} ⚙️ Настройки (Swap / ZRAM)\e[40G${NC}$(get_swap_status)"
         echo -e " ${YELLOW}6.${NC} 🧹 Очистка Сервера (Место на диске)"
         if [[ "${HAS_UPDATE:-no}" == "yes" ]]; then
             echo -e "${BLUE}------------------------------------------------------${NC}"

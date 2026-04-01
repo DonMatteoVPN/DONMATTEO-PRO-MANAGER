@@ -1,5 +1,9 @@
 #!/bin/bash
-# Модуль Очистки сервера
+# Модуль Очистки сервера и Умной Ротации
+
+CLEANER_CONF=$(ensure_module_config "cleaner")
+LIMITS_FILE="${CLEANER_CONF}/limits.txt"
+[[ ! -f "$LIMITS_FILE" ]] && echo "50M 3" > "$LIMITS_FILE"
 
 silent_cleaner_run() {
     journalctl --vacuum-time=3d >/dev/null 2>&1 || true
@@ -11,13 +15,8 @@ silent_cleaner_run() {
     if command -v snap &>/dev/null; then snap set system refresh.retain=2 2>/dev/null || true; fi
 }
 
-# Функция статуса автоочистки
 get_cleaner_status() {
-    if crontab -l 2>/dev/null | grep -q -F -- '--silent-clean'; then
-        echo -e "${GREEN}[ВКЛЮЧЕНО]${NC}"
-    else
-        echo -e "${RED}[ВЫКЛЮЧЕНО]${NC}"
-    fi
+    if crontab -l 2>/dev/null | grep -q -F -- '--silent-clean'; then echo -e "${GREEN}[ВКЛЮЧЕНО]${NC}"; else echo -e "${RED}[ВЫКЛЮЧЕНО]${NC}"; fi
 }
 
 get_free_space() { df -k / | awk 'NR==2 {print $4}'; }
@@ -70,7 +69,7 @@ inspect_directory() {
         clear; echo -e "${MAGENTA}=== ИЗУЧЕНИЕ ДИРЕКТОРИИ ===${NC}"
         echo -e "${CYAN}Текущая папка:${NC} $DIR\n${GRAY}Топ-10 самых тяжелых элементов внутри:${NC}\n"
         du -sh "$DIR"/* 2>/dev/null | sort -hr | head -10 > /tmp/ad_tmp.txt
-        if [ ! -s /tmp/ad_tmp.txt ]; then echo -e "  ${GRAY}(Пусто или нет прав доступа)${NC}"; declare -a PATHS=(); else
+        if[ ! -s /tmp/ad_tmp.txt ]; then echo -e "  ${GRAY}(Пусто или нет прав доступа)${NC}"; declare -a PATHS=(); else
             local i=1; declare -a PATHS; declare -a TYPES
             while read -r line; do
                 local size=$(echo "$line" | awk '{print $1}'); local fpath=$(echo "$line" | cut -f2-); local fname=$(basename "$fpath")
@@ -83,7 +82,7 @@ inspect_directory() {
         echo -e " Введите ${YELLOW}НОМЕР${NC} чтобы открыть, или ${CYAN}0${NC} для возврата."
         read -p ">> " choice
         [[ "$choice" == "0" || -z "$choice" ]] && return
-        if [[ "$choice" =~ ^[0-9]+$ ]] && [ "$choice" -lt "$i" ] && [ "$choice" -gt 0 ]; then
+        if [[ "$choice" =~ ^[0-9]+$ ]] &&[ "$choice" -lt "$i" ] && [ "$choice" -gt 0 ]; then
             local TARGET="${PATHS[$choice]}"; local TYPE="${TYPES[$choice]}"
             [[ "$TYPE" == "dir" ]] && inspect_directory "$TARGET" "$IS_SAFE_RM" || file_interaction "$TARGET" "$IS_SAFE_RM"
         else echo -e "${RED}Неверный ввод.${NC}"; sleep 1; fi
@@ -96,18 +95,18 @@ analyze_disk() {
         echo -e "${GRAY}Выберите директорию, в которую хотите провалиться:${NC}\n"
         local S_LOG=$(du -sh /var/log 2>/dev/null | awk '{print $1}'); local S_DOCKER=$(du -sh /var/lib/docker 2>/dev/null | awk '{print $1}')
         local S_APT=$(du -sh /var/cache/apt 2>/dev/null | awk '{print $1}'); local S_TMP=$(du -sh /tmp 2>/dev/null | awk '{print $1}')
-        local S_NGINX=$(du -sh "${BASE_DIR}/nginx_logs" 2>/dev/null | awk '{print $1}')
+        local S_NGINX=$(du -sh "/opt/remnawave/nginx_logs" 2>/dev/null | awk '{print $1}')
         echo -e " ${YELLOW}1.${NC} 📚 /var/log                 ${CYAN}[${S_LOG:-0}]${NC}  ${GRAY}(Безопасно очищать файлы)${NC}"
         echo -e " ${YELLOW}2.${NC} 🐳 /var/lib/docker          ${CYAN}[${S_DOCKER:-0}]${NC}  ${GRAY}(Только просмотр, удалять ОПАСНО)${NC}"
         echo -e " ${YELLOW}3.${NC} 📦 /var/cache/apt           ${CYAN}[${S_APT:-0}]${NC}  ${GRAY}(Безопасно удалять файлы)${NC}"
         echo -e " ${YELLOW}4.${NC} 🗑️  /tmp                     ${CYAN}[${S_TMP:-0}]${NC}  ${GRAY}(Безопасно удалять файлы)${NC}"
-        echo -e " ${YELLOW}5.${NC} 🌐 ${BASE_DIR}/nginx_logs ${CYAN}[${S_NGINX:-0}]${NC}  ${GRAY}(Логи панели)${NC}"
+        echo -e " ${YELLOW}5.${NC} 🌐 /opt/remnawave/nginx_logs ${CYAN}[${S_NGINX:-0}]${NC}  ${GRAY}(Логи панели)${NC}"
         echo -e "${BLUE}------------------------------------------------------${NC}"
         echo -e " ${CYAN}0.${NC} ↩️  Назад"
         read -p ">> " ad_choice
         case $ad_choice in
             1) inspect_directory "/var/log" "truncate" ;; 2) inspect_directory "/var/lib/docker" "block" ;;
-            3) inspect_directory "/var/cache/apt" "rm" ;; 4) inspect_directory "/tmp" "rm" ;; 5) inspect_directory "${BASE_DIR}/nginx_logs" "truncate" ;;
+            3) inspect_directory "/var/cache/apt" "rm" ;; 4) inspect_directory "/tmp" "rm" ;; 5) inspect_directory "/opt/remnawave/nginx_logs" "truncate" ;;
             0) return ;;
         esac
     done
@@ -127,7 +126,6 @@ clean_all_funcs() {
 
 lr_create_rule() {
     local TARGET_PATH=$1; local SIZE=$2; local COUNT=$3
-    # Генерируем безопасное имя файла на основе пути
     local SAFE_NAME=$(echo "$TARGET_PATH" | sed -e 's/\//_/g' -e 's/^_//' -e 's/\*//g' -e 's/\.log//g')
     local RULE_FILE="/etc/logrotate.d/don_${SAFE_NAME}"
 
@@ -144,17 +142,40 @@ ${TARGET_PATH} {
 EOF
 }
 
-lr_auto_scan() {
-    local DEF_SIZE=$1; local DEF_COUNT=$2
-    clear; echo -e "${MAGENTA}=== ГЛУБОКОЕ СКАНИРОВАНИЕ ЛОГОВ (РАДАР) ===${NC}"
-    echo -e "${GRAY}Ищем ВСЕ .log файлы на сервере, которые не управляются системой...${NC}"
-    echo -e "${YELLOW}[!] Это может занять 1-2 минуты. Сканируем весь сервер...${NC}\n"
+# Автоматическая настройка базовых логов (Вызывается при установке)
+lr_auto_setup() {
+    local limits=$(cat "$LIMITS_FILE")
+    local D_SIZE=$(echo "$limits" | awk '{print $1}')
+    local D_COUNT=$(echo "$limits" | awk '{print $2}')
+    
+    # Создаем правила для наших основных папок
+    lr_create_rule "/opt/remnawave/nginx_logs/*.log" "$D_SIZE" "$D_COUNT"
+    lr_create_rule "/var/log/remnanode/*.log" "$D_SIZE" "$D_COUNT"
+}
 
-    # ГЛУБОКОЕ СКАНИРОВАНИЕ: ищем по всему серверу, исключая только системные папки
-    echo -e "${CYAN}[*] Сканирование корневой файловой системы...${NC}"
+# Очистка мертвых правил (если папка удалена)
+lr_clean_dead_rules() {
+    for r_file in /etc/logrotate.d/don_*; do
+        if [ -f "$r_file" ]; then
+            local target=$(head -n 1 "$r_file" | awk '{print $1}' | sed 's/\/\*\.log//')
+            if[ ! -d "$target" ]; then
+                rm -f "$r_file"
+            fi
+        fi
+    done
+}
+
+lr_auto_scan() {
+    local limits=$(cat "$LIMITS_FILE")
+    local DEF_SIZE=$(echo "$limits" | awk '{print $1}')
+    local DEF_COUNT=$(echo "$limits" | awk '{print $2}')
+    
+    clear; echo -e "${MAGENTA}=== ГЛУБОКОЕ СКАНИРОВАНИЕ ЛОГОВ (РАДАР) ===${NC}"
+    echo -e "${GRAY}Ищем ВСЕ .log файлы в безопасных директориях (/opt, /var/log, /root)...${NC}"
+
+    # БЕЗОПАСНОЕ СКАНИРОВАНИЕ: Исключаем Docker и системные дебри
     mapfile -t LOG_DIRS < <(
-        find / -type f -name "*.log" 2>/dev/null | \
-        grep -vE "^/(proc|sys|dev|run|snap|boot|lost\+found)" | \
+        find /opt /var/log /root -type f -name "*.log" 2>/dev/null | \
         grep -vE "/var/log/(journal|apt|installer|unattended-upgrades|private)" | \
         xargs -r dirname | \
         sort -u
@@ -168,7 +189,6 @@ lr_auto_scan() {
     
     local i=1; declare -a DIRS_ARRAY
     for dir in "${LOG_DIRS[@]}"; do
-        # Проверяем, есть ли папка в любом конфиге logrotate
         if grep -qr "$dir" /etc/logrotate.d/ 2>/dev/null; then
             local STATUS="${GREEN}[УЖЕ В РОТАЦИИ]${NC}"
         else
@@ -200,7 +220,7 @@ lr_auto_scan() {
         echo -e "${GREEN}[+] Успешно! Взято под управление: $added папок${NC}"; pause; return
     fi
 
-    if [[ "$c_scan" =~ ^[0-9]+$ ]] && [ "$c_scan" -lt "$i" ] && [ "$c_scan" -gt 0 ]; then
+    if [[ "$c_scan" =~ ^[0-9]+$ ]] &&[ "$c_scan" -lt "$i" ] && [ "$c_scan" -gt 0 ]; then
         local TARGET_DIR="${DIRS_ARRAY[$c_scan]}"
         if grep -qr "$TARGET_DIR" /etc/logrotate.d/ 2>/dev/null; then
             echo -e "${YELLOW}Для этой папки уже есть правило. Сначала удалите его в меню управления.${NC}"; sleep 2; return
@@ -216,7 +236,10 @@ lr_auto_scan() {
 }
 
 lr_manual_add() {
-    local DEF_SIZE=$1; local DEF_COUNT=$2
+    local limits=$(cat "$LIMITS_FILE")
+    local DEF_SIZE=$(echo "$limits" | awk '{print $1}')
+    local DEF_COUNT=$(echo "$limits" | awk '{print $2}')
+    
     clear; echo -e "${MAGENTA}=== РУЧНОЕ ДОБАВЛЕНИЕ ПУТИ ===${NC}"
     echo -e "Введите полный путь к файлу лога или папке (с /*.log на конце)."
     read -p ">> Путь: " manual_path
@@ -234,8 +257,8 @@ lr_manage_rules() {
         clear; echo -e "${MAGENTA}=== АКТИВНЫЕ ПРАВИЛА РОТАЦИИ ===${NC}"
         local i=1; declare -a RULE_FILES
         
-        for r_file in /etc/logrotate.d/don_* /etc/logrotate.d/remnawave-nginx; do
-            if [ -f "$r_file" ]; then
+        for r_file in /etc/logrotate.d/don_*; do
+            if[ -f "$r_file" ]; then
                 local target=$(head -n 1 "$r_file" | awk '{print $1}')
                 local size=$(grep "size" "$r_file" | awk '{print $2}' || echo "?")
                 local count=$(grep "rotate" "$r_file" | awk '{print $2}' || echo "?")
@@ -254,12 +277,11 @@ lr_manage_rules() {
         
         [[ "$d_ch" == "0" || -z "$d_ch" ]] && return
         
-        # Удаление всех правил
         if [[ "$d_ch" == "all" ]]; then
             echo -e "\n${RED}${BOLD}⚠️  ВНИМАНИЕ! Вы собираетесь удалить ВСЕ правила ротации!${NC}"
             read -p "Подтвердите удаление (введите YES): " confirm
             if [[ "$confirm" == "YES" ]]; then
-                for r_file in /etc/logrotate.d/don_* /etc/logrotate.d/remnawave-nginx; do
+                for r_file in /etc/logrotate.d/don_*; do
                     [ -f "$r_file" ] && rm -f "$r_file"
                 done
                 echo -e "${GREEN}[+] Все правила удалены!${NC}"; sleep 2
@@ -267,8 +289,7 @@ lr_manage_rules() {
             else
                 echo -e "${YELLOW}[!] Отменено.${NC}"; sleep 1
             fi
-        # Удаление одного правила
-        elif [[ "$d_ch" =~ ^[0-9]+$ ]] && [ "$d_ch" -lt "$i" ] && [ "$d_ch" -gt 0 ]; then
+        elif [[ "$d_ch" =~ ^[0-9]+$ ]] &&[ "$d_ch" -lt "$i" ] && [ "$d_ch" -gt 0 ]; then
             rm -f "${RULE_FILES[$d_ch]}"
             echo -e "${GREEN}Правило удалено!${NC}"; sleep 1
         fi
@@ -276,8 +297,9 @@ lr_manage_rules() {
 }
 
 lr_set_global_limits() {
-    local current_size=$1
-    local current_count=$2
+    local limits=$(cat "$LIMITS_FILE")
+    local current_size=$(echo "$limits" | awk '{print $1}')
+    local current_count=$(echo "$limits" | awk '{print $2}')
     
     clear
     echo -e "${MAGENTA}=== ГЛОБАЛЬНЫЕ ЛИМИТЫ РОТАЦИИ ===${NC}"
@@ -295,8 +317,7 @@ lr_set_global_limits() {
     
     echo -e "\n${GREEN}[+] Новые глобальные лимиты: ${current_size} / ${current_count} шт.${NC}"
     
-    # Проверяем есть ли существующие правила
-    local existing_rules=$(ls /etc/logrotate.d/don_* /etc/logrotate.d/remnawave-nginx 2>/dev/null | wc -l)
+    local existing_rules=$(ls /etc/logrotate.d/don_* 2>/dev/null | wc -l)
     
     if [ "$existing_rules" -gt 0 ]; then
         echo -e "\n${YELLOW}[?] Найдено ${existing_rules} существующих правил ротации.${NC}"
@@ -306,36 +327,36 @@ lr_set_global_limits() {
         if [[ "$apply_to_all" =~ ^[yYдД]$ ]]; then
             echo -e "\n${CYAN}[*] Применяем новые лимиты ко всем правилам...${NC}"
             local updated=0
-            
-            for r_file in /etc/logrotate.d/don_* /etc/logrotate.d/remnawave-nginx; do
+            for r_file in /etc/logrotate.d/don_*; do
                 if [ -f "$r_file" ]; then
-                    # Обновляем size и rotate в файле
                     sed -i "s/size .*/size $current_size/" "$r_file"
                     sed -i "s/rotate .*/rotate $current_count/" "$r_file"
                     ((updated++))
                 fi
             done
-            
             echo -e "${GREEN}[+] Обновлено правил: $updated${NC}"
         else
             echo -e "${CYAN}[i] Новые лимиты будут применяться только к новым правилам.${NC}"
         fi
     fi
     
-    # Возвращаем новые значения через специальный файл (не через stdout)
-    echo "$current_size $current_count" > /tmp/logrotate_limits.tmp
+    # Сохраняем навсегда
+    echo "$current_size $current_count" > "$LIMITS_FILE"
 }
 
 manage_logrotate() {
-    local D_SIZE="50M"
-    local D_COUNT="3"
-
+    lr_clean_dead_rules # Чистим мусор при входе
+    
     while true; do
+        local limits=$(cat "$LIMITS_FILE")
+        local D_SIZE=$(echo "$limits" | awk '{print $1}')
+        local D_COUNT=$(echo "$limits" | awk '{print $2}')
+        
         clear
         echo -e "${MAGENTA}=== УМНАЯ РОТАЦИЯ ЛОГОВ (ЛОКАТОР) ===${NC}"
         echo -e "${GRAY}Автоматически находит, архивирует и удаляет старые логи.${NC}"
         
-        local RULES_COUNT=$(ls /etc/logrotate.d/don_* /etc/logrotate.d/remnawave-nginx 2>/dev/null | wc -l)
+        local RULES_COUNT=$(ls /etc/logrotate.d/don_* 2>/dev/null | wc -l)
         echo -e "\n 📊 Активных правил под вашим управлением: ${GREEN}${RULES_COUNT}${NC}\n"
 
         echo -e " ${GREEN}1.${NC} 🔍 Сканировать сервер на 'дикие' логи (Автопоиск)"
@@ -348,20 +369,10 @@ manage_logrotate() {
 
         read -p ">> " lr_choice
         case $lr_choice in
-            1) lr_auto_scan "$D_SIZE" "$D_COUNT" ;;
-            2) lr_manual_add "$D_SIZE" "$D_COUNT" ;;
+            1) lr_auto_scan ;;
+            2) lr_manual_add ;;
             3) lr_manage_rules ;;
-            4) 
-                lr_set_global_limits "$D_SIZE" "$D_COUNT"
-                # Читаем новые значения из временного файла
-                if [[ -f /tmp/logrotate_limits.tmp ]]; then
-                    local new_limits=$(cat /tmp/logrotate_limits.tmp)
-                    D_SIZE=$(echo "$new_limits" | awk '{print $1}')
-                    D_COUNT=$(echo "$new_limits" | awk '{print $2}')
-                    rm -f /tmp/logrotate_limits.tmp
-                fi
-                pause
-                ;;
+            4) lr_set_global_limits; pause ;;
             5) echo -e "\n${CYAN}[*] Запуск принудительной ротации...${NC}"; logrotate -f /etc/logrotate.conf; echo -e "${GREEN}[+] Ротация выполнена! Проверьте архивы.${NC}"; pause ;;
             0) return ;;
         esac
@@ -418,14 +429,9 @@ setup_cron() {
     pause
 }
 
-# Функция статуса ротации логов (быстрая версия)
 get_logrotate_status() {
-    local rules_count=$(ls /etc/logrotate.d/don_* /etc/logrotate.d/remnawave-nginx 2>/dev/null | wc -l)
-    if [ "$rules_count" -gt 0 ]; then
-        echo -e "${GREEN}[Активно: ${rules_count} правил]${NC}"
-    else
-        echo -e "${RED}[НЕ НАСТРОЕНО]${NC}"
-    fi
+    local rules_count=$(ls /etc/logrotate.d/don_* 2>/dev/null | wc -l)
+    if[ "$rules_count" -gt 0 ]; then echo -e "${GREEN}[Активно: ${rules_count} правил]${NC}"; else echo -e "${RED}[НЕ НАСТРОЕНО]${NC}"; fi
 }
 
 menu_cleaner() {

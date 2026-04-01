@@ -1,40 +1,34 @@
 #!/bin/bash
 # Модуль Fail2Ban (Защита от брутфорса и сканеров)
 
-# Инициализация дефолтных значений в новых путях, если файлы отсутствуют
 [[ ! -f "$F2B_RETRY_FILE" ]] && echo "3" > "$F2B_RETRY_FILE"
 [[ ! -f "$F2B_FIND_FILE" ]] && echo "600" > "$F2B_FIND_FILE"
 [[ ! -f "$F2B_BAN_FILE" ]] && echo "24h" > "$F2B_BAN_FILE"
 [[ ! -f "$WHITELIST_FILE" ]] && touch "$WHITELIST_FILE"
 
-# --- ГЛАВНАЯ ФУНКЦИЯ УСТАНОВКИ И ОБНОВЛЕНИЯ КОНФИГА ---
 install_fail2ban() {
     echo -e "${CYAN}[*] Настройка конфигурации Fail2Ban...${NC}"
     
-    # Гарантируем наличие файла лога ДО установки fail2ban
     if [[ ! -f /var/log/auth.log ]]; then
         echo -e "${YELLOW}[!] Файл /var/log/auth.log не найден. Создаю и устанавливаю rsyslog...${NC}"
         touch /var/log/auth.log
         chmod 640 /var/log/auth.log
         chown root:adm /var/log/auth.log 2>/dev/null
-        
-        # Устанавливаем rsyslog СНАЧАЛА
         smart_apt_install "rsyslog" || echo -e "${YELLOW}[!] Rsyslog не установлен, продолжаем...${NC}"
         systemctl enable rsyslog >/dev/null 2>&1
         systemctl restart rsyslog >/dev/null 2>&1
         sleep 1
     fi
     
-    # Теперь устанавливаем fail2ban
     smart_apt_install "fail2ban" || { pause; return 1; }
     
-    mkdir -p /var/log/nginx_custom
-    touch /var/log/nginx_custom/access.log
-    touch /var/log/nginx_custom/stream_scanners.log
+    # Создаем папку на хосте, если её вдруг нет
+    mkdir -p /opt/remnawave/nginx_logs
+    touch /opt/remnawave/nginx_logs/access.log
+    touch /opt/remnawave/nginx_logs/stream_scanners.log
 
     local WL_IPS=$(awk '{print $1}' "$WHITELIST_FILE" | grep -E '^[0-9]' | tr '\n' ' ')
     
-    # Загружаем текущие значения из файлов
     local CUR_RETRY=$(cat "$F2B_RETRY_FILE")
     local CUR_FIND=$(cat "$F2B_FIND_FILE")
     local CUR_BAN=$(cat "$F2B_BAN_FILE")
@@ -67,8 +61,9 @@ bantime = ${CUR_BAN}
 enabled  = true
 port     = anyport
 filter   = nginx-scanners
-logpath  = /var/log/nginx_custom/access.log
-           /var/log/nginx_custom/stream_scanners.log
+# ПРАВИЛЬНЫЕ ПУТИ НА ХОСТЕ!
+logpath  = /opt/remnawave/nginx_logs/access.log
+           /opt/remnawave/nginx_logs/stream_scanners.log
 maxretry = ${CUR_RETRY}
 findtime = ${CUR_FIND}
 bantime  = ${CUR_BAN}
@@ -85,7 +80,6 @@ EOF
     fi
 }
 
-# --- ФУНКЦИИ УПРАВЛЕНИЯ НАСТРОЙКАМИ ---
 set_f2b_val() {
     local FILE=$1; local NAME=$2; local EXAMPLE=$3
     clear; echo -e "${MAGENTA}=== ИЗМЕНЕНИЕ НАСТРОЙКИ: $NAME ===${NC}"
@@ -141,9 +135,6 @@ show_f2b_help() {
     echo -e "   На сколько IP адрес попадает в черный список UFW."
     echo -e "   Можно писать в секундах (3600) или часах/днях (24h, 7d)."
     echo -e "   ${CYAN}Для VPN:${NC} Рекомендуется ${GREEN}24h${NC} или больше."
-    
-    echo -e "\n${YELLOW}СОВЕТ:${NC} Если вас сильно атакуют, увеличьте Bantime до 48h и"
-    echo -e "уменьшите Maxretry до 2 (но будьте осторожны со своими паролями!)."
     pause
 }
 
@@ -193,7 +184,7 @@ f2b_unban() {
         echo -e "\nВыберите ${YELLOW}НОМЕР${NC} для разблокировки или ${YELLOW}0${NC} для выхода:"
         read -p ">> " ch
         [[ "$ch" == "0" || -z "$ch" ]] && return
-        if [[ "$ch" =~ ^[0-9]+$ ]] && [ "$ch" -lt "$i" ] && [ "$ch" -gt 0 ]; then
+        if [[ "$ch" =~ ^[0-9]+$ ]] &&[ "$ch" -lt "$i" ] && [ "$ch" -gt 0 ]; then
             local TARGET_IP="${BAN_IP_ARRAY[$ch]}"
             local TARGET_JAIL="${BAN_JAIL_ARRAY[$ch]}"
             fail2ban-client set "$TARGET_JAIL" unbanip "$TARGET_IP" >/dev/null 2>&1
@@ -205,6 +196,7 @@ f2b_unban() {
 f2b_whitelist() {
     while true; do
         clear; echo -e "${MAGENTA}=== БЕЛЫЙ СПИСОК (WHITELIST) ===${NC}"
+        echo -e "${GRAY}IP из этого списка игнорируют лимиты UFW и баны Fail2Ban.${NC}\n"
         local i=1; declare -a WL_ARRAY
         while read -r line; do
             if [[ -n "$line" ]]; then
@@ -217,8 +209,8 @@ f2b_whitelist() {
         echo -e "\n ${GREEN}1.${NC} Добавить IP | ${RED}2.${NC} Удалить IP | ${CYAN}0.${NC} Назад"
         read -p ">> " ch
         case $ch in
-            1) read -p "Впишите IP: " ip; [[ $ip =~ ^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$ ]] && { read -p "Описание: " name; echo "$ip # $name" >> "$WHITELIST_FILE"; ufw allow from $ip comment "Whitelist" >/dev/null 2>&1; install_fail2ban; ufw_global_setup >/dev/null 2>&1; echo -e "${GREEN}Добавлен!${NC}"; }; sleep 1 ;;
-            2) read -p "Впишите НОМЕР: " num; [[ "$num" =~ ^[0-9]+$ ]] && [ "$num" -lt "$i" ] && [ "$num" -gt 0 ] && { grep -v -x -F "${WL_ARRAY[$num]}" "$WHITELIST_FILE" > /tmp/wl_tmp && mv /tmp/wl_tmp "$WHITELIST_FILE"; install_fail2ban; ufw_global_setup >/dev/null 2>&1; echo -e "${GREEN}Удалено.${NC}"; }; sleep 1 ;;
+            1) read -p "Впишите IP: " ip; [[ $ip =~ ^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$ ]] && { read -p "Описание: " name; echo "$ip # $name" >> "$WHITELIST_FILE"; install_fail2ban >/dev/null 2>&1; ufw_global_setup >/dev/null 2>&1; echo -e "${GREEN}Добавлен в исключения!${NC}"; }; sleep 1 ;;
+            2) read -p "Впишите НОМЕР: " num; [[ "$num" =~ ^[0-9]+$ ]] &&[ "$num" -lt "$i" ] && [ "$num" -gt 0 ] && { grep -v -x -F "${WL_ARRAY[$num]}" "$WHITELIST_FILE" > /tmp/wl_tmp && mv /tmp/wl_tmp "$WHITELIST_FILE"; install_fail2ban >/dev/null 2>&1; ufw_global_setup >/dev/null 2>&1; echo -e "${GREEN}Удалено.${NC}"; }; sleep 1 ;;
             0) return ;;
         esac
     done

@@ -1,7 +1,6 @@
 #!/bin/bash
 # Модуль UFW (Сетевой экран и Anti-DDoS)
 
-# Инициализация дефолтных значений в новых путях, если файлы отсутствуют
 [[ ! -f "$CONN_VAL_FILE" ]] && echo "150" > "$CONN_VAL_FILE"
 [[ ! -f "$RATE_VAL_FILE" ]] && echo "80" > "$RATE_VAL_FILE"
 [[ ! -f "$CONNLIMIT_FILE" ]] && touch "$CONNLIMIT_FILE"
@@ -16,14 +15,9 @@ get_ufw_status() {
 }
 
 get_ufw_log_status() {
-    if LANG=C ufw status verbose 2>/dev/null | grep -iq "logging: on"; then
-        echo -e "${GREEN}[ВКЛЮЧЕНЫ]${NC}"
-    else
-        echo -e "${RED}[ВЫКЛЮЧЕНЫ]${NC}"
-    fi
+    if LANG=C ufw status verbose 2>/dev/null | grep -iq "logging: on"; then echo -e "${GREEN}[ВКЛЮЧЕНЫ]${NC}"; else echo -e "${RED}[ВЫКЛЮЧЕНЫ]${NC}"; fi
 }
 
-# --- ВНУТРЕННЯЯ ФУНКЦИЯ: ПРОВЕРКА И УСТАНОВКА RSYSLOG ---
 ensure_rsyslog() {
     if ! command -v rsyslogd &> /dev/null; then
         echo -e "${CYAN}[*] Служба rsyslog не найдена. Установка для работы логов...${NC}"
@@ -31,22 +25,45 @@ ensure_rsyslog() {
         systemctl enable --now rsyslog >/dev/null 2>&1
         sleep 2
     fi
+    if ! systemctl is-active --quiet rsyslog; then systemctl start rsyslog; fi
+    if[ ! -f /var/log/ufw.log ]; then touch /var/log/ufw.log; chmod 640 /var/log/ufw.log; chown syslog:adm /var/log/ufw.log; fi
+}
 
-    if ! systemctl is-active --quiet rsyslog; then
-        echo -e "${YELLOW}[*] Запуск службы rsyslog...${NC}"
-        systemctl start rsyslog
-    fi
+# --- АВТОМАТИЧЕСКИЙ СКАНЕР ОТКРЫТЫХ ПОРТОВ ---
+ufw_auto_protect_open_ports() {
+    echo -e "${CYAN}[*] Авто-сканирование открытых портов UFW...${NC}"
+    
+    # Читаем добавленные правила (даже если UFW сейчас выключен)
+    local open_ports=$(ufw show added 2>/dev/null | grep -i "allow" | grep -i "tcp" | awk '{print $3}' | cut -d'/' -f1 | grep -E '^[0-9]+$' | sort -u)
+    
+    local ACTIVE_SSH=$(grep -i "^Port" /etc/ssh/sshd_config | awk '{print $2}' | head -n 1)
+    [[ -z "$ACTIVE_SSH" ]] && ACTIVE_SSH="22"
 
-    if [ ! -f /var/log/ufw.log ]; then
-        touch /var/log/ufw.log
-        chmod 640 /var/log/ufw.log
-        chown syslog:adm /var/log/ufw.log
+    local added=0
+    for port in $open_ports; do
+        [[ "$port" == "$ACTIVE_SSH" ]] && continue
+        
+        local is_new=0
+        if ! grep -q "^${port}$" "$CONNLIMIT_FILE" 2>/dev/null; then
+            echo "$port" >> "$CONNLIMIT_FILE"
+            is_new=1
+        fi
+        if ! grep -q "^${port}$" "$RATELIMIT_FILE" 2>/dev/null; then
+            echo "$port" >> "$RATELIMIT_FILE"
+            is_new=1
+        fi
+        [[ "$is_new" -eq 1 ]] && ((added++))
+    done
+    
+    if [ "$added" -gt 0 ]; then
+        echo -e "${GREEN}[+] Автоматически добавлено под Anti-DDoS защиту портов: $added${NC}"
+    else
+        echo -e "${GRAY}[i] Новых открытых портов для защиты не найдено.${NC}"
     fi
 }
 
-# --- ГЛАВНАЯ ФУНКЦИЯ СБОРКИ ПРАВИЛ ---
 ufw_global_setup() {
-    echo -e "${CYAN}[*] Пересборка правил Anti-DDoS и перезапуск UFW...${NC}"
+    echo -e "${CYAN}[*] Пересборка правил Anti-DDoS (Без изменения открытых портов)...${NC}"
     smart_apt_install "ufw" || return 1
     
     local CONN_LIMIT=$(cat "$CONN_VAL_FILE")
@@ -54,56 +71,53 @@ ufw_global_setup() {
     
     [[ -f /etc/ufw/before.rules ]] && cp /etc/ufw/before.rules /etc/ufw/before.rules.bak
     
-    # Очистка старых блоков правил DonMatteo
-    sed -i '/# --- НАЧАЛО: Правила защиты от DDoS (DonMatteo) ---/,/# --- КОНЕЦ: Направляем трафик на проверку скорости ---/d' /etc/ufw/before.rules
+    # Очистка старых блоков
+    sed -i '/# --- НАЧАЛО: Правила защиты от DDoS (DonMatteo) ---/,/# --- КОНЕЦ: Правила защиты от DDoS (DonMatteo) ---/d' /etc/ufw/before.rules
     
-    # Сборка Белого Списка
-    local WL_BEFORE=""
-    [[ -f "$WHITELIST_FILE" ]] && for ip in $(awk '{print $1}' "$WHITELIST_FILE" | grep -E '^[0-9]'); do WL_BEFORE+="-A ufw-before-input -s $ip -j ACCEPT\\n"; done
-    
-    # Сборка CONNLIMIT (Жесткие лимиты)
-    local CONNLIMIT_RULES=""
-    [[ -f "$CONNLIMIT_FILE" ]] && for port in $(cat "$CONNLIMIT_FILE" | grep -E '^[0-9]+$'); do 
-        CONNLIMIT_RULES+="-A ufw-before-input -p tcp --dport $port -m connlimit --connlimit-above $CONN_LIMIT --connlimit-mask 32 -j DROP\\n"
+    # Сборка Белого Списка (Игнор лимитов)
+    local WL_BYPASS="-A DON-LIMITS -s 127.0.0.0/8 -j RETURN\\n"
+    [[ -f "$WHITELIST_FILE" ]] && for ip in $(awk '{print $1}' "$WHITELIST_FILE" | grep -E '^[0-9]'); do 
+        WL_BYPASS+="-A DON-LIMITS -s $ip -j RETURN\\n"
     done
     
-    # Сборка RATELIMIT (Плавные лимиты)
+    # Сборка CONNLIMIT
+    local CONNLIMIT_RULES=""
+    [[ -f "$CONNLIMIT_FILE" ]] && for port in $(cat "$CONNLIMIT_FILE" | grep -E '^[0-9]+$'); do 
+        CONNLIMIT_RULES+="-A DON-LIMITS -p tcp --dport $port -m connlimit --connlimit-above $CONN_LIMIT --connlimit-mask 32 -j DROP\\n"
+    done
+    
+    # Сборка RATELIMIT
     local RATELIMIT_RULES=""
     local ACTIVE_SSH=$(grep -i "^Port" /etc/ssh/sshd_config | awk '{print $2}' | head -n 1)
     [[ -z "$ACTIVE_SSH" ]] && ACTIVE_SSH="22"
     
-    # SSH всегда под лимитом скорости
-    RATELIMIT_RULES+="-A ufw-before-input -p tcp --dport $ACTIVE_SSH -m conntrack --ctstate NEW -j IN_LIMIT\\n"
+    RATELIMIT_RULES+="-A DON-LIMITS -p tcp --dport $ACTIVE_SSH -m conntrack --ctstate NEW -m limit --limit $RATE_LIMIT/s --limit-burst 250 -j RETURN\\n"
+    RATELIMIT_RULES+="-A DON-LIMITS -p tcp --dport $ACTIVE_SSH -m conntrack --ctstate NEW -j DROP\\n"
     
     [[ -f "$RATELIMIT_FILE" ]] && for port in $(cat "$RATELIMIT_FILE" | grep -E '^[0-9]+$'); do
         if [[ "$port" != "$ACTIVE_SSH" ]]; then 
-            RATELIMIT_RULES+="-A ufw-before-input -p tcp --dport $port -m conntrack --ctstate NEW -j IN_LIMIT\\n"
+            RATELIMIT_RULES+="-A DON-LIMITS -p tcp --dport $port -m conntrack --ctstate NEW -m limit --limit $RATE_LIMIT/s --limit-burst 250 -j RETURN\\n"
+            RATELIMIT_RULES+="-A DON-LIMITS -p tcp --dport $port -m conntrack --ctstate NEW -j DROP\\n"
         fi
     done
 
-    # Инъекция правил в начало файла before.rules
+    # Инъекция правил (Не трогаем дефолтные политики и порты)
     sed -i '/^\*filter/a \
 # --- НАЧАЛО: Правила защиты от DDoS (DonMatteo) ---\n\
-:IN_LIMIT - [0:0]\n\
--A IN_LIMIT -m limit --limit '"$RATE_LIMIT"'/s --limit-burst 250 -j RETURN\n\
--A IN_LIMIT -j DROP\n\
-# --- КОНЕЦ: Правила защиты от DDoS ---\n\
+:DON-LIMITS -[0:0]\n\
+-A ufw-before-input -j DON-LIMITS\n\
 \n\
-:ufw-before-input - [0:0]\n\
+# 1. Белый список (Игнорируют лимиты)\n\
+'"$WL_BYPASS"'\n\
+# 2. Защита от сканеров\n\
+-A DON-LIMITS -p tcp --tcp-flags ALL NONE -j DROP\n\
+-A DON-LIMITS -p tcp --tcp-flags ALL ALL -j DROP\n\
 \n\
-# --- НАЧАЛО: Белый список (Пропуск лимитов) ---\n\
-'"$WL_BEFORE"'# --- КОНЕЦ: Белый список ---\n\
-\n\
-# --- НАЧАЛО: Защита от сканеров и кривых пакетов ---\n\
--A ufw-before-input -p tcp --tcp-flags ALL NONE -j DROP\n\
--A ufw-before-input -p tcp --tcp-flags ALL ALL -j DROP\n\
-# --- КОНЕЦ: Защита от сканеров ---\n\
-\n\
-# --- НАЧАЛО: Лимит одновременных соединений ---\n\
-'"$CONNLIMIT_RULES"'# --- КОНЕЦ: Лимит одновременных соединений ---\n\
-\n\
-# --- НАЧАЛО: Направляем трафик на проверку скорости ---\n\
-'"$RATELIMIT_RULES"'# --- КОНЕЦ: Направляем трафик на проверку скорости ---' /etc/ufw/before.rules
+# 3. Лимит одновременных соединений\n\
+'"$CONNLIMIT_RULES"'\n\
+# 4. Лимит скорости новых соединений\n\
+'"$RATELIMIT_RULES"'\n\
+# --- КОНЕЦ: Правила защиты от DDoS (DonMatteo) ---' /etc/ufw/before.rules
 
     echo "y" | ufw enable > /dev/null 2>&1
     ufw reload > /dev/null 2>&1
@@ -204,13 +218,10 @@ view_ufw_logs_live() {
     clear
     echo -e "${YELLOW}Мониторинг блокировок (Нажмите Ctrl+C для выхода)...${NC}"
     echo -e "${GRAY}Вы будете видеть только события [BLOCK] и [LIMIT]${NC}\n"
-    
-    if [ ! -s /var/log/ufw.log ]; then
-        echo -e "${YELLOW}Лог-файл пока пуст. Попробуйте обновить страницу позже,${NC}"
-        echo -e "${YELLOW}когда появятся первые заблокированные запросы.${NC}"
+    if[ ! -s /var/log/ufw.log ]; then
+        echo -e "${YELLOW}Лог-файл пока пуст. Попробуйте обновить страницу позже.${NC}"
         pause; return
     fi
-
     tail -f /var/log/ufw.log | grep --line-buffered -E "\[UFW (BLOCK|LIMIT)\]" | awk '{
         match($0, /SRC=([0-9.]+)/, src);
         match($0, /DPT=([0-9]+)/, dpt);
@@ -221,17 +232,14 @@ view_ufw_logs_live() {
 }
 
 show_top_attackers() {
-    clear
-    echo -e "${MAGENTA}=== ТОП-10 IP ПОД БЛОКИРОВКОЙ ===${NC}"
-    echo -e "${GRAY}На основе текущего файла /var/log/ufw.log${NC}\n"
-    if [ ! -s /var/log/ufw.log ]; then echo -e "${RED}Файл логов пуст.${NC}"; pause; return; fi
+    clear; echo -e "${MAGENTA}=== ТОП-10 IP ПОД БЛОКИРОВКОЙ ===${NC}\n"
+    if[ ! -s /var/log/ufw.log ]; then echo -e "${RED}Файл логов пуст.${NC}"; pause; return; fi
     grep "UFW BLOCK" /var/log/ufw.log | awk -F'SRC=' '{print $2}' | awk '{print $1}' | sort | uniq -c | sort -nr | head -n 10 | awk '{print "  [" $1 " атак] - " $2}'
     pause
 }
 
 show_top_ports() {
-    clear
-    echo -e "${MAGENTA}=== САМЫЕ АТАКУЕМЫЕ ПОРТЫ ===${NC}\n"
+    clear; echo -e "${MAGENTA}=== САМЫЕ АТАКУЕМЫЕ ПОРТЫ ===${NC}\n"
     if [ ! -s /var/log/ufw.log ]; then echo -e "${RED}Файл логов пуст.${NC}"; pause; return; fi
     grep "UFW BLOCK" /var/log/ufw.log | awk -F'DPT=' '{print $2}' | awk '{print $1}' | sort | uniq -c | sort -nr | head -n 5 | awk '{print "  Порт " $2 " - заблокировано " $1 " запросов"}'
     pause
@@ -245,7 +253,6 @@ show_vpn_limits_help() {
     echo -e "   ${CYAN}Для VPN:${NC} Если используете Xray gRPC или Reality с мультиплексированием (Mux),"
     echo -e "   клиент занимает ВСЕГО 1-5 соединений. Если Mux выключен - до 50."
     echo -e "   ${GREEN}Рекомендуемое значение:${NC} 150-200 (золотая середина)."
-    echo -e "   ${YELLOW}Зачем повышать?${NC} Если за одним роутером (NAT) сидит весь офис."
     echo -e "\n${BOLD}2. RATELIMIT (Скорость новых запросов)${NC}"
     echo -e "   ${CYAN}Как работает:${NC} Сколько РАЗ в секунду клиент может постучаться на порт."
     echo -e "   ${CYAN}Для VPN:${NC} Обычный клиент стучится 1-2 раза при подключении."
@@ -258,13 +265,24 @@ ufw_add_port() {
     clear; echo -e "${MAGENTA}=== ОТКРЫТИЕ ПОРТА ===${NC}"; read -p "Впишите порт: " port; [[ -z "$port" ]] && return
     read -p "Укажите протокол (tcp/udp/any) [any]: " proto; [[ -z "$proto" || "$proto" == "any" ]] && proto_str="" || proto_str="/$proto"
     read -p "Добавьте комментарий: " comment; [[ -z "$comment" ]] && comment="Manual_Rule"
-    ufw allow ${port}${proto_str} comment "${comment}"; echo -e "${GREEN}Правило успешно добавлено!${NC}"; pause
+    
+    ufw allow ${port}${proto_str} comment "${comment}" >/dev/null 2>&1
+    echo -e "${GREEN}Правило успешно добавлено в UFW!${NC}"
+    
+    # АВТОМАТИКА: Если это TCP порт, сразу накидываем на него лимиты
+    if [[ -z "$proto_str" || "$proto_str" == "/tcp" ]]; then
+        grep -q "^$port$" "$CONNLIMIT_FILE" || echo "$port" >> "$CONNLIMIT_FILE"
+        grep -q "^$port$" "$RATELIMIT_FILE" || echo "$port" >> "$RATELIMIT_FILE"
+        ufw_global_setup >/dev/null 2>&1
+        echo -e "${YELLOW}[i] Порт $port автоматически взят под защиту Anti-DDoS.${NC}"
+    fi
+    pause
 }
 
 ufw_add_ip() {
     clear; echo -e "${MAGENTA}=== ДОСТУП ДЛЯ IP ===${NC}"; read -p "Впишите IP адрес: " ip; [[ -z "$ip" ]] && return
     read -p "Впишите порт (или 'any' для всех) [any]: " port; [[ -z "$port" ]] && port="any"
-    read -p "Укажите протокол (tcp/udp/any) [any]: " proto; [[ -z "$proto" || "$proto" == "any" ]] && proto_str="" || proto_str="proto $proto"
+    read -p "Укажите протокол (tcp/udp/any)[any]: " proto; [[ -z "$proto" || "$proto" == "any" ]] && proto_str="" || proto_str="proto $proto"
     read -p "Добавьте комментарий: " comment; [[ -z "$comment" ]] && comment="IP_Access"
     if [[ "$port" == "any" ]]; then ufw allow from $ip comment "$comment"; else ufw allow from $ip to any port $port $proto_str comment "$comment"; fi
     echo -e "${GREEN}Доступ разрешен!${NC}"; pause
@@ -277,7 +295,14 @@ ufw_show_delete() {
         echo -e "\nВведите ${YELLOW}НОМЕР${NC} для удаления, или ${YELLOW}0${NC} для выхода:"
         read -p ">> " num
         [[ "$num" == "0" || -z "$num" ]] && return
-        [[ "$num" =~ ^[0-9]+$ ]] && { echo "y" | ufw delete $num; echo -e "${GREEN}Правило удалено.${NC}"; sleep 1; } || { echo -e "${RED}Ошибка ввода.${NC}"; sleep 1; }
+        if [[ "$num" =~ ^[0-9]+$ ]]; then
+            echo "y" | ufw delete $num >/dev/null 2>&1
+            echo -e "${GREEN}Правило удалено.${NC}"
+            ufw_global_setup >/dev/null 2>&1
+            sleep 1
+        else
+            echo -e "${RED}Ошибка ввода.${NC}"; sleep 1
+        fi
     done
 }
 

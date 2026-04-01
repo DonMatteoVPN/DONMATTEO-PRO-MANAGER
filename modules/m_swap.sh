@@ -53,6 +53,39 @@ make_swap() {
     echo -e "${GRAY}(Внимание! Сообщение 'old swap signature' от mkswap — это норма, старая подпись просто перезаписана)${NC}"
 }
 
+make_zram_smart() {
+    clear
+    echo -e "${CYAN}======================================================${NC}"
+    echo -e "${MAGENTA}${BOLD} 🌪️ АВТОМАТИЧЕСКАЯ УСТАНОВКА ZRAM (ТУРБО-СЖАТИЕ) ${NC}"
+    echo -e "${CYAN}======================================================${NC}"
+    echo -e "${GRAY}[*] Установка пакета zram-tools...${NC}"
+    
+    # Ставим пакет (без вывода лишнего мусора)
+    apt-get update -y >/dev/null 2>&1
+    apt-get install zram-tools bc -y >/dev/null 2>&1
+
+    echo -e "${GRAY}[*] Применение агрессивных настроек сжатия (LZ4, 60%)...${NC}"
+    cat << 'EOF' > /etc/default/zramswap
+# Алгоритм сжатия (lz4 — самый быстрый для VPN)
+ALGO=lz4
+# Размер ZRAM (60% от RAM)
+PERCENT=60
+# Приоритет (выше обычного дискового свопа)
+PRIORITY=100
+EOF
+
+    # Перезапуск сервиса
+    systemctl restart zramswap >/dev/null 2>&1
+    systemctl enable zramswap >/dev/null 2>&1
+
+    echo -e "${GREEN}[+] ZRAM успешно установлен и активирован!${NC}"
+    echo -e "${YELLOW}Текущий статус ZRAM:${NC}"
+    echo -e "${GRAY}------------------------------------------------------${NC}"
+    zramctl
+    echo -e "${GRAY}------------------------------------------------------${NC}"
+    echo -e "${CYAN}Ваша оперативная память теперь работает как турбо-двигатель.${NC}"
+}
+
 manage_swap() {
     while true; do
         clear
