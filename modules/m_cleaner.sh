@@ -42,9 +42,6 @@ run_with_diff() {
     pause
 }
 
-# ======================================================================
-# ИНТЕРАКТИВНЫЙ БРАУЗЕР ФАЙЛОВ И ПАПОК
-# ======================================================================
 file_interaction() {
     local FILE=$1; local MODE=$2
     while true; do
@@ -82,7 +79,7 @@ inspect_directory() {
         echo -e " Введите ${YELLOW}НОМЕР${NC} чтобы открыть, или ${CYAN}0${NC} для возврата."
         read -p ">> " choice
         [[ "$choice" == "0" || -z "$choice" ]] && return
-        if [[ "$choice" =~ ^[0-9]+$ ]] &&[ "$choice" -lt "$i" ] && [ "$choice" -gt 0 ]; then
+        if [[ "$choice" =~ ^[0-9]+$ ]] && [ "$choice" -lt "$i" ] &&[ "$choice" -gt 0 ]; then
             local TARGET="${PATHS[$choice]}"; local TYPE="${TYPES[$choice]}"
             [[ "$TYPE" == "dir" ]] && inspect_directory "$TARGET" "$IS_SAFE_RM" || file_interaction "$TARGET" "$IS_SAFE_RM"
         else echo -e "${RED}Неверный ввод.${NC}"; sleep 1; fi
@@ -120,10 +117,6 @@ clean_all_funcs() {
     if command -v snap &>/dev/null; then echo -e "${BLUE}[i] Очистка Snap...${NC}"; snap set system refresh.retain=2 2>/dev/null || true; while read -r snapname revision; do [[ -n "$snapname" ]] && snap remove "$snapname" --revision="$revision"; done < <(snap list all 2>/dev/null | awk '/disabled/{print $1, $3}'); fi
 }
 
-# ======================================================================
-# УНИВЕРСАЛЬНЫЙ ЛОКАТОР И МЕНЕДЖЕР ЛОГОВ
-# ======================================================================
-
 lr_create_rule() {
     local TARGET_PATH=$1; local SIZE=$2; local COUNT=$3
     local SAFE_NAME=$(echo "$TARGET_PATH" | sed -e 's/\//_/g' -e 's/^_//' -e 's/\*//g' -e 's/\.log//g')
@@ -142,23 +135,20 @@ ${TARGET_PATH} {
 EOF
 }
 
-# Автоматическая настройка базовых логов (Вызывается при установке)
 lr_auto_setup() {
     local limits=$(cat "$LIMITS_FILE")
     local D_SIZE=$(echo "$limits" | awk '{print $1}')
     local D_COUNT=$(echo "$limits" | awk '{print $2}')
     
-    # Создаем правила для наших основных папок
     lr_create_rule "/opt/remnawave/nginx_logs/*.log" "$D_SIZE" "$D_COUNT"
     lr_create_rule "/var/log/remnanode/*.log" "$D_SIZE" "$D_COUNT"
 }
 
-# Очистка мертвых правил (если папка удалена)
 lr_clean_dead_rules() {
     for r_file in /etc/logrotate.d/don_*; do
         if [ -f "$r_file" ]; then
             local target=$(head -n 1 "$r_file" | awk '{print $1}' | sed 's/\/\*\.log//')
-            if[ ! -d "$target" ]; then
+            if [ ! -d "$target" ]; then
                 rm -f "$r_file"
             fi
         fi
@@ -173,7 +163,6 @@ lr_auto_scan() {
     clear; echo -e "${MAGENTA}=== ГЛУБОКОЕ СКАНИРОВАНИЕ ЛОГОВ (РАДАР) ===${NC}"
     echo -e "${GRAY}Ищем ВСЕ .log файлы в безопасных директориях (/opt, /var/log, /root)...${NC}"
 
-    # БЕЗОПАСНОЕ СКАНИРОВАНИЕ: Исключаем Docker и системные дебри
     mapfile -t LOG_DIRS < <(
         find /opt /var/log /root -type f -name "*.log" 2>/dev/null | \
         grep -vE "/var/log/(journal|apt|installer|unattended-upgrades|private)" | \
@@ -258,7 +247,7 @@ lr_manage_rules() {
         local i=1; declare -a RULE_FILES
         
         for r_file in /etc/logrotate.d/don_*; do
-            if[ -f "$r_file" ]; then
+            if [ -f "$r_file" ]; then
                 local target=$(head -n 1 "$r_file" | awk '{print $1}')
                 local size=$(grep "size" "$r_file" | awk '{print $2}' || echo "?")
                 local count=$(grep "rotate" "$r_file" | awk '{print $2}' || echo "?")
@@ -289,7 +278,7 @@ lr_manage_rules() {
             else
                 echo -e "${YELLOW}[!] Отменено.${NC}"; sleep 1
             fi
-        elif [[ "$d_ch" =~ ^[0-9]+$ ]] &&[ "$d_ch" -lt "$i" ] && [ "$d_ch" -gt 0 ]; then
+        elif [[ "$d_ch" =~ ^[0-9]+$ ]] && [ "$d_ch" -lt "$i" ] &&[ "$d_ch" -gt 0 ]; then
             rm -f "${RULE_FILES[$d_ch]}"
             echo -e "${GREEN}Правило удалено!${NC}"; sleep 1
         fi
@@ -328,7 +317,7 @@ lr_set_global_limits() {
             echo -e "\n${CYAN}[*] Применяем новые лимиты ко всем правилам...${NC}"
             local updated=0
             for r_file in /etc/logrotate.d/don_*; do
-                if [ -f "$r_file" ]; then
+                if[ -f "$r_file" ]; then
                     sed -i "s/size .*/size $current_size/" "$r_file"
                     sed -i "s/rotate .*/rotate $current_count/" "$r_file"
                     ((updated++))
@@ -340,12 +329,11 @@ lr_set_global_limits() {
         fi
     fi
     
-    # Сохраняем навсегда
     echo "$current_size $current_count" > "$LIMITS_FILE"
 }
 
 manage_logrotate() {
-    lr_clean_dead_rules # Чистим мусор при входе
+    lr_clean_dead_rules
     
     while true; do
         local limits=$(cat "$LIMITS_FILE")
@@ -378,8 +366,6 @@ manage_logrotate() {
         esac
     done
 }
-
-# ======================================================================
 
 setup_cron() {
     clear; echo -e "${MAGENTA}=== ИНТЕРАКТИВНАЯ НАСТРОЙКА АВТООЧИСТКИ ===${NC}"
@@ -431,7 +417,7 @@ setup_cron() {
 
 get_logrotate_status() {
     local rules_count=$(ls /etc/logrotate.d/don_* 2>/dev/null | wc -l)
-    if[ "$rules_count" -gt 0 ]; then echo -e "${GREEN}[Активно: ${rules_count} правил]${NC}"; else echo -e "${RED}[НЕ НАСТРОЕНО]${NC}"; fi
+    if [ "$rules_count" -gt 0 ]; then echo -e "${GREEN}[Активно: ${rules_count} правил]${NC}"; else echo -e "${RED}[НЕ НАСТРОЕНО]${NC}"; fi
 }
 
 menu_cleaner() {

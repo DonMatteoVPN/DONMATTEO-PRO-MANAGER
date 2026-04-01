@@ -1,7 +1,7 @@
 #!/bin/bash
 
 # --- ТЕКУЩАЯ ВЕРСИЯ СКРИПТА ---
-export APP_VERSION="02.222" # <--- ВЕРСИЯ ПОВЫШЕНА ДЛЯ АВТООБНОВЛЕНИЯ ВСЕХ НОД!
+export APP_VERSION="02.223"
 export REPO_RAW="https://raw.githubusercontent.com/DonMatteoVPN/DONMATTEO-PRO-MANAGER/main"
 
 # Глобальные флаги (Инициализация)

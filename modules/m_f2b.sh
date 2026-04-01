@@ -9,7 +9,7 @@
 install_fail2ban() {
     echo -e "${CYAN}[*] Настройка конфигурации Fail2Ban...${NC}"
     
-    if [[ ! -f /var/log/auth.log ]]; then
+    if[ ! -f /var/log/auth.log ]; then
         echo -e "${YELLOW}[!] Файл /var/log/auth.log не найден. Создаю и устанавливаю rsyslog...${NC}"
         touch /var/log/auth.log
         chmod 640 /var/log/auth.log
@@ -22,7 +22,6 @@ install_fail2ban() {
     
     smart_apt_install "fail2ban" || { pause; return 1; }
     
-    # Создаем папку на хосте, если её вдруг нет
     mkdir -p /opt/remnawave/nginx_logs
     touch /opt/remnawave/nginx_logs/access.log
     touch /opt/remnawave/nginx_logs/stream_scanners.log
@@ -61,7 +60,6 @@ bantime = ${CUR_BAN}
 enabled  = true
 port     = anyport
 filter   = nginx-scanners
-# ПРАВИЛЬНЫЕ ПУТИ НА ХОСТЕ!
 logpath  = /opt/remnawave/nginx_logs/access.log
            /opt/remnawave/nginx_logs/stream_scanners.log
 maxretry = ${CUR_RETRY}
