@@ -26,7 +26,7 @@ ensure_rsyslog() {
         sleep 2
     fi
     if ! systemctl is-active --quiet rsyslog; then systemctl start rsyslog; fi
-    if [ ! -f /var/log/ufw.log ]; then touch /var/log/ufw.log; chmod 640 /var/log/ufw.log; chown syslog:adm /var/log/ufw.log; fi
+    if[ ! -f /var/log/ufw.log ]; then touch /var/log/ufw.log; chmod 640 /var/log/ufw.log; chown syslog:adm /var/log/ufw.log; fi
 }
 
 # --- АВТОМАТИЧЕСКИЙ СКАНЕР ОТКРЫТЫХ ПОРТОВ ---
@@ -54,7 +54,7 @@ ufw_auto_protect_open_ports() {
         [[ "$is_new" -eq 1 ]] && ((added++))
     done
     
-    if[ "$added" -gt 0 ]; then
+    if [ "$added" -gt 0 ]; then
         echo -e "${GREEN}[+] Автоматически добавлено под Anti-DDoS защиту портов: $added${NC}"
     else
         echo -e "${GRAY}[i] Новых открытых портов для защиты не найдено.${NC}"
@@ -123,7 +123,7 @@ set_limit_val() {
     clear; echo -e "${MAGENTA}=== ИЗМЕНЕНИЕ ЗНАЧЕНИЯ: $NAME ===${NC}"
     echo -e "${GRAY}Текущее значение: $(cat "$FILE")${NC}"
     read -p "Введите новое число: " newval
-    if [[ "$newval" =~ ^[0-9]+$ ]] &&[ "$newval" -gt 0 ]; then
+    if [[ "$newval" =~ ^[0-9]+$ ]] && [ "$newval" -gt 0 ]; then
         echo "$newval" > "$FILE"
         ufw_global_setup
     else
@@ -212,7 +212,7 @@ view_ufw_logs_live() {
     clear
     echo -e "${YELLOW}Мониторинг блокировок (Нажмите Ctrl+C для выхода)...${NC}"
     echo -e "${GRAY}Вы будете видеть только события [BLOCK] и [LIMIT]${NC}\n"
-    if[ ! -s /var/log/ufw.log ]; then
+    if [ ! -s /var/log/ufw.log ]; then
         echo -e "${YELLOW}Лог-файл пока пуст. Попробуйте обновить страницу позже.${NC}"
         pause; return
     fi
