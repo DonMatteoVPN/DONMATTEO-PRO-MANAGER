@@ -157,46 +157,55 @@ protect_panel_connection() {
 
 install_sysctl() {
     echo -e "\n${CYAN}[*] Включение РЕЖИМА БОГА (BBR + TCP Тюнинг + Anti-DDoS)...${NC}"
-    
-    cat << 'EOF' > /etc/sysctl.conf
+
+    # Определяем основной сетевой интерфейс автоматически
+    local MAIN_IF
+    MAIN_IF=$(ip route show default 2>/dev/null | awk '/default/ {print $5}' | head -n1)
+    [[ -z "$MAIN_IF" ]] && MAIN_IF="eth0"
+
+    cat << EOF > /etc/sysctl.d/99-donmatteo.conf
 # ==========================================
-# 🚀 РЕЖИМ БОГА: СКОРОСТЬ И ОТКЛЮЧЕНИЕ IPV6
+# 🚀 РЕЖИМ БОГА: СКОРОСТЬ (BBR + FastOpen)
+# Файл: /etc/sysctl.d/99-donmatteo.conf
 # ==========================================
 net.core.default_qdisc = fq
 net.ipv4.tcp_congestion_control = bbr
-net.ipv6.conf.all.disable_ipv6 = 1
-net.ipv6.conf.default.disable_ipv6 = 1
-net.ipv6.conf.lo.disable_ipv6 = 1
-net.ipv6.conf.ens3.disable_ipv6 = 1
-
-# ==========================================
-# ⚡ ТЮНИНГ ДЛЯ XRAY И NGINX (ВЫСОКАЯ НАГРУЗКА)
-# ==========================================
 net.ipv4.tcp_fastopen = 3
 net.ipv4.tcp_mtu_probing = 1
 net.ipv4.tcp_fin_timeout = 15
 net.ipv4.tcp_tw_reuse = 1
 
 # ==========================================
-# 🛡️ БАЗОВАЯ ЗАЩИТА ОТ DDOS И СКАНЕРОВ
+# 🛡️ ЗАЩИТА ОТ DDOS (Безопасные настройки)
+# ВАЖНО: rp_filter=2 (мягкий режим)
+# rp_filter=1 ломает DNS на VPS с асимметричной маршрутизацией!
 # ==========================================
 net.ipv4.tcp_syncookies = 1
 net.ipv4.tcp_max_syn_backlog = 8192
 net.core.somaxconn = 65535
 net.ipv4.tcp_synack_retries = 2
-net.ipv4.conf.all.rp_filter = 1
-net.ipv4.conf.default.rp_filter = 1
+net.ipv4.conf.all.rp_filter = 2
+net.ipv4.conf.default.rp_filter = 2
 net.ipv4.icmp_echo_ignore_broadcasts = 1
+
+# ==========================================
+# 🚫 ОТКЛЮЧЕНИЕ IPV6 (Только если нет IPv6)
+# ==========================================
+net.ipv6.conf.all.disable_ipv6 = 1
+net.ipv6.conf.default.disable_ipv6 = 1
+net.ipv6.conf.lo.disable_ipv6 = 1
+net.ipv6.conf.${MAIN_IF}.disable_ipv6 = 1
 EOF
 
-    sysctl -p >/dev/null 2>&1
+    sysctl --system >/dev/null 2>&1
     local bbr_status
     bbr_status=$(sysctl -n net.ipv4.tcp_congestion_control 2>/dev/null)
     local tfo_status
     tfo_status=$(sysctl -n net.ipv4.tcp_fastopen 2>/dev/null)
-    
+
     echo -e "${GREEN}[+] Ядро Linux успешно переведено в максимальный режим!${NC}"
-    echo -e "${GRAY} └─ Алгоритм: ${YELLOW}${bbr_status^^}${GRAY} | FastOpen: ${YELLOW}${tfo_status}${NC}"
+    echo -e "${GRAY} └─ Алгоритм: ${YELLOW}${bbr_status^^}${GRAY} | FastOpen: ${YELLOW}${tfo_status}${GRAY} | Интерфейс: ${YELLOW}${MAIN_IF}${NC}"
+    echo -e "${GRAY} └─ rp_filter: ${YELLOW}2 (мягкий, не ломает DNS)${NC}"
 }
 
 get_logrotate_status() {

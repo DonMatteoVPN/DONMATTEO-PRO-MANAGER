@@ -64,58 +64,112 @@ ufw_auto_protect_open_ports() {
 ufw_global_setup() {
     echo -e "${CYAN}[*] Пересборка правил Anti-DDoS (Без изменения открытых портов)...${NC}"
     smart_apt_install "ufw" || return 1
-    
-    local CONN_LIMIT=$(cat "$CONN_VAL_FILE")
-    local RATE_LIMIT=$(cat "$RATE_VAL_FILE")
-    
-    [[ -f /etc/ufw/before.rules ]] && cp /etc/ufw/before.rules /etc/ufw/before.rules.bak
-    
-    sed -i '/# --- НАЧАЛО: Правила защиты от DDoS (DonMatteo) ---/,/# --- КОНЕЦ: Правила защиты от DDoS (DonMatteo) ---/d' /etc/ufw/before.rules
-    
-    local WL_BYPASS="-A DON-LIMITS -s 127.0.0.0/8 -j RETURN\\n"
-    [[ -f "$WHITELIST_FILE" ]] && for ip in $(awk '{print $1}' "$WHITELIST_FILE" | grep -E '^[0-9]'); do 
-        WL_BYPASS+="-A DON-LIMITS -s $ip -j RETURN\\n"
-    done
-    
-    local CONNLIMIT_RULES=""
-    [[ -f "$CONNLIMIT_FILE" ]] && for port in $(cat "$CONNLIMIT_FILE" | grep -E '^[0-9]+$'); do 
-        CONNLIMIT_RULES+="-A DON-LIMITS -p tcp --dport $port -m connlimit --connlimit-above $CONN_LIMIT --connlimit-mask 32 -j DROP\\n"
-    done
-    
-    local RATELIMIT_RULES=""
-    local ACTIVE_SSH=$(grep -i "^Port" /etc/ssh/sshd_config | awk '{print $2}' | head -n 1)
-    [[ -z "$ACTIVE_SSH" ]] && ACTIVE_SSH="22"
-    
-    RATELIMIT_RULES+="-A DON-LIMITS -p tcp --dport $ACTIVE_SSH -m conntrack --ctstate NEW -m limit --limit $RATE_LIMIT/s --limit-burst 250 -j RETURN\\n"
-    RATELIMIT_RULES+="-A DON-LIMITS -p tcp --dport $ACTIVE_SSH -m conntrack --ctstate NEW -j DROP\\n"
-    
-    [[ -f "$RATELIMIT_FILE" ]] && for port in $(cat "$RATELIMIT_FILE" | grep -E '^[0-9]+$'); do
-        if [[ "$port" != "$ACTIVE_SSH" ]]; then 
-            RATELIMIT_RULES+="-A DON-LIMITS -p tcp --dport $port -m conntrack --ctstate NEW -m limit --limit $RATE_LIMIT/s --limit-burst 250 -j RETURN\\n"
-            RATELIMIT_RULES+="-A DON-LIMITS -p tcp --dport $port -m conntrack --ctstate NEW -j DROP\\n"
-        fi
-    done
 
-    sed -i '/^\*filter/a \
-# --- НАЧАЛО: Правила защиты от DDoS (DonMatteo) ---\n\
-:DON-LIMITS -[0:0]\n\
--A ufw-before-input -j DON-LIMITS\n\
-\n\
-# 1. Белый список (Игнорируют лимиты)\n\
-'"$WL_BYPASS"'\n\
-# 2. Защита от сканеров\n\
--A DON-LIMITS -p tcp --tcp-flags ALL NONE -j DROP\n\
--A DON-LIMITS -p tcp --tcp-flags ALL ALL -j DROP\n\
-\n\
-# 3. Лимит одновременных соединений\n\
-'"$CONNLIMIT_RULES"'\n\
-# 4. Лимит скорости новых соединений\n\
-'"$RATELIMIT_RULES"'\n\
-# --- КОНЕЦ: Правила защиты от DDoS (DonMatteo) ---' /etc/ufw/before.rules
+    local CONN_LIMIT
+    CONN_LIMIT=$(cat "$CONN_VAL_FILE")
+    local RATE_LIMIT
+    RATE_LIMIT=$(cat "$RATE_VAL_FILE")
+
+    # Резервная копия
+    [[ -f /etc/ufw/before.rules ]] && cp /etc/ufw/before.rules /etc/ufw/before.rules.bak
+
+    # Убираем все старые правила DonMatteo
+    sed -i '/# --- НАЧАЛО: Правила защиты от DDoS (DonMatteo) ---/,/# --- КОНЕЦ: Правила защиты от DDoS (DonMatteo) ---/d' /etc/ufw/before.rules
+    sed -i '/# --- НАЧАЛО: Защита от сканеров/,/# --- КОНЕЦ: Защита от сканеров ---/d' /etc/ufw/before.rules
+    sed -i '/# --- НАЧАЛО: Лимит одновременных/,/# --- КОНЕЦ: Лимит одновременных ---/d' /etc/ufw/before.rules
+    sed -i '/# --- НАЧАЛО: Направляем трафик/,/# --- КОНЕЦ: Направляем трафик/d' /etc/ufw/before.rules
+    sed -i '/^:IN_LIMIT/d; /^-A IN_LIMIT/d; /^:DON-LIMITS/d; /^-A DON-LIMITS/d; /^-A ufw-before-input -j DON-LIMITS/d' /etc/ufw/before.rules
+
+    # Whitelist: применяем через UFW allow from IP (автоматически)
+    if [[ -f "$WHITELIST_FILE" ]]; then
+        while IFS= read -r wl_line; do
+            local wl_ip
+            wl_ip=$(echo "$wl_line" | awk '{print $1}')
+            [[ "$wl_ip" =~ ^[0-9]+\.[0-9]+\.[0-9]+\.[0-9] ]] || continue
+            local wl_comment
+            wl_comment=$(echo "$wl_line" | sed 's/^[^ ]*//' | sed 's/^[[:space:]]*//' | sed 's/^#[[:space:]]*//')
+            [[ -z "$wl_comment" ]] && wl_comment="Whitelist"
+            ufw allow from "$wl_ip" comment "$wl_comment" >/dev/null 2>&1 || true
+        done < "$WHITELIST_FILE"
+    fi
+
+    local ACTIVE_SSH
+    ACTIVE_SSH=$(grep -i "^Port" /etc/ssh/sshd_config | awk '{print $2}' | head -n1)
+    [[ -z "$ACTIVE_SSH" ]] && ACTIVE_SSH="22"
+
+    # ==================================================================
+    # Строим before.rules через Python (надёжнее sed для многострочных блоков)
+    # ==================================================================
+    python3 - <<PYEOF
+import re
+
+with open('/etc/ufw/before.rules', 'r') as f:
+    content = f.read()
+
+# 1. Цепочка IN_LIMIT вставляется после *filter
+chain_block = """# --- НАЧАЛО: Правила защиты от DDoS (DonMatteo) ---
+:IN_LIMIT - [0:0]
+-A IN_LIMIT -m limit --limit ${RATE_LIMIT}/s --limit-burst 250 -j RETURN
+-A IN_LIMIT -j DROP
+# --- КОНЕЦ: Правила защиты от DDoS (DonMatteo) ---
+"""
+content = content.replace('*filter', '*filter\n' + chain_block, 1)
+
+# 2. Строим блок правил для ufw-before-input
+input_rules = []
+
+# Защита от сканеров
+input_rules.append('# --- НАЧАЛО: Защита от сканеров и кривых пакетов ---')
+input_rules.append('-A ufw-before-input -p tcp --tcp-flags ALL NONE -j DROP')
+input_rules.append('-A ufw-before-input -p tcp --tcp-flags ALL ALL -j DROP')
+input_rules.append('# --- КОНЕЦ: Защита от сканеров ---')
+
+# CONNLIMIT
+conn_ports = []
+try:
+    with open('${CONNLIMIT_FILE}') as cf:
+        conn_ports = [p.strip() for p in cf if p.strip().isdigit()]
+except: pass
+
+if conn_ports:
+    input_rules.append('# --- НАЧАЛО: Лимит одновременных соединений (Анти-ДДОС L4 на 1 IP) ---')
+    for p in conn_ports:
+        input_rules.append(f'-A ufw-before-input -p tcp --dport {p} -m connlimit --connlimit-above ${CONN_LIMIT} --connlimit-mask 32 -j DROP')
+    input_rules.append('# --- КОНЕЦ: Лимит одновременных соединений ---')
+
+# RATELIMIT
+rate_ports = []
+try:
+    with open('${RATELIMIT_FILE}') as rf:
+        rate_ports = [p.strip() for p in rf if p.strip().isdigit()]
+except: pass
+
+all_rate_ports = ['${ACTIVE_SSH}'] + [p for p in rate_ports if p != '${ACTIVE_SSH}']
+input_rules.append('# --- НАЧАЛО: Направляем трафик на проверку скорости (Глобальный лимит) ---')
+for p in all_rate_ports:
+    input_rules.append(f'-A ufw-before-input -p tcp --dport {p} -m conntrack --ctstate NEW -j IN_LIMIT')
+input_rules.append('# --- КОНЕЦ: Направляем трафик на проверку скорости ---')
+
+input_block = '\n'.join(input_rules) + '\n'
+
+# Вставляем перед :ufw-before-output
+target = ':ufw-before-output - [0:0]'
+if target in content:
+    content = content.replace(target, input_block + '\n' + target, 1)
+
+with open('/etc/ufw/before.rules', 'w') as f:
+    f.write(content)
+print('before.rules OK')
+PYEOF
+
+    # UFW defaults: incoming=deny, outgoing=allow (стандарт — не меняем оутгоинг)
+    ufw default deny incoming  > /dev/null 2>&1
+    ufw default allow outgoing > /dev/null 2>&1
 
     echo "y" | ufw enable > /dev/null 2>&1
     ufw reload > /dev/null 2>&1
-    echo -e "${GREEN}[+] Правила успешно применены. Лимиты: Conn=$CONN_LIMIT, Rate=$RATE_LIMIT/s${NC}"
+    echo -e "${GREEN}[+] Правила Anti-DDoS применены. Conn=${CONN_LIMIT}, Rate=${RATE_LIMIT}/s${NC}"
+    echo -e "${GRAY}    └─ Before.rules обновлён. SSH: ${ACTIVE_SSH}${NC}"
 }
 
 set_limit_val() {
