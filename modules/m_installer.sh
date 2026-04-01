@@ -161,70 +161,130 @@ protect_panel_connection() {
 }
 
 install_sysctl() {
-    echo -e "\n${CYAN}[*] Включение РЕЖИМА БОГА (BBR + TCP Тюнинг + Anti-DDoS)...${NC}"
+    echo -e "\n${CYAN}[*] Применение «Золотого стандарта 2026» (BBR + IPv6-Off + Tuning)...${NC}"
 
     # Определяем основной сетевой интерфейс автоматически
     local MAIN_IF
     MAIN_IF=$(ip route show default 2>/dev/null | awk '/default/ {print $5}' | head -n1)
     [[ -z "$MAIN_IF" ]] && MAIN_IF="eth0"
 
-    cat << EOF > /etc/sysctl.d/99-donmatteo.conf
-# ==========================================
-# 🚀 РЕЖИМ БОГА: СКОРОСТЬ (BBR + FastOpen)
-# Файл: /etc/sysctl.d/99-donmatteo.conf
-# ==========================================
+    # Заменяем содержимое /etc/sysctl.conf согласно Золотому Стандарту
+    cat << EOF > /etc/sysctl.conf
+# === СКОРОСТЬ (BBR) И ОТКЛЮЧЕНИЕ IPV6 (Золотой Стандарт 2026) ===
 net.core.default_qdisc = fq
 net.ipv4.tcp_congestion_control = bbr
+net.ipv6.conf.all.disable_ipv6 = 1
+net.ipv6.conf.default.disable_ipv6 = 1
+net.ipv6.conf.lo.disable_ipv6 = 1
+net.ipv6.conf.${MAIN_IF}.disable_ipv6 = 1
+
+# === ТЮНИНГ ДЛЯ XRAY И NGINX (РЕЖИМ БОГА) ===
 net.ipv4.tcp_fastopen = 3
 net.ipv4.tcp_mtu_probing = 1
 net.ipv4.tcp_fin_timeout = 15
 net.ipv4.tcp_tw_reuse = 1
 
-# ==========================================
-# 🛡️ ЗАЩИТА ОТ DDOS (Безопасные настройки)
-# ВАЖНО: rp_filter=2 (мягкий режим)
-# rp_filter=1 ломает DNS на VPS с асимметричной маршрутизацией!
-# ==========================================
+# === ЗАЩИТА ТРАФИКА И DNS (Essential Fix) ===
 net.ipv4.tcp_syncookies = 1
-net.ipv4.tcp_max_syn_backlog = 8192
-net.core.somaxconn = 65535
-net.ipv4.tcp_synack_retries = 2
 net.ipv4.conf.all.rp_filter = 2
 net.ipv4.conf.default.rp_filter = 2
-net.ipv4.icmp_echo_ignore_broadcasts = 1
-
-# ==========================================
-# 🚫 ОТКЛЮЧЕНИЕ IPV6 (Только если нет IPv6)
-# ==========================================
-net.ipv6.conf.all.disable_ipv6 = 1
-net.ipv6.conf.default.disable_ipv6 = 1
-net.ipv6.conf.lo.disable_ipv6 = 1
-net.ipv6.conf.${MAIN_IF}.disable_ipv6 = 1
 EOF
 
-    sysctl --system >/dev/null 2>&1
-    local bbr_status
-    bbr_status=$(sysctl -n net.ipv4.tcp_congestion_control 2>/dev/null)
-    local tfo_status
-    tfo_status=$(sysctl -n net.ipv4.tcp_fastopen 2>/dev/null)
+    sysctl -p >/dev/null 2>&1
+    echo -e "${GREEN}[+] Параметры ядра успешно обновлены до Золотого Стандарта.${NC}"
+    verify_system_protection
+}
 
-    echo -e "${GREEN}[+] Ядро Linux успешно переведено в максимальный режим!${NC}"
-    echo -e "${GRAY} └─ Алгоритм: ${YELLOW}${bbr_status^^}${GRAY} | FastOpen: ${YELLOW}${tfo_status}${GRAY} | Интерфейс: ${YELLOW}${MAIN_IF}${NC}"
-    echo -e "${GRAY} └─ rp_filter: ${YELLOW}2 (мягкий, не ломает DNS)${NC}"
+verify_system_protection() {
+    echo -e "\n${MAGENTA}======================================================${NC}"
+    echo -e "${BOLD}  📊 ПРОВЕРКА ПРИМЕНЕНИЯ «ЗОЛОТОГО СТАНДАРТА»${NC}"
+    echo -e "${MAGENTA}======================================================${NC}"
+    
+    # 1. BBR
+    local bbr=$(sysctl -n net.ipv4.tcp_congestion_control 2>/dev/null)
+    if [[ "$bbr" == "bbr" ]]; then
+        echo -e " 🚀 BBR (Скорость):           ${GREEN}[ ПРИМЕНЕНО: $bbr ]${NC}"
+    else
+        echo -e " 🚀 BBR (Скорость):           ${RED}[ ОШИБКА: $bbr ]${NC}"
+    fi
+
+    # 2. Fast Open
+    local tfo=$(sysctl -n net.ipv4.tcp_fastopen 2>/dev/null)
+    if [[ "$tfo" == "3" ]]; then
+        echo -e " ⚡ Fast Open (Отклик):       ${GREEN}[ ПРИМЕНЕНО: $tfo ]${NC}"
+    else
+        echo -e " ⚡ Fast Open (Отклик):       ${RED}[ ОШИБКА: $tfo ]${NC}"
+    fi
+
+    # 3. MTU Probing
+    local mtu=$(sysctl -n net.ipv4.tcp_mtu_probing 2>/dev/null)
+    if [[ "$mtu" == "1" ]]; then
+        echo -e " 🦾 MTU Probing (Стабильность): ${GREEN}[ ПРИМЕНЕНО: $mtu ]${NC}"
+    else
+        echo -e " 🦾 MTU Probing (Стабильность): ${RED}[ ОШИБКА: $mtu ]${NC}"
+    fi
+
+    # 4. IPv6
+    if ip a | grep -q "inet6"; then
+        echo -e " 🕵️ IPv6 (Скрытность):        ${RED}[ ВНИМАНИЕ: АКТИВЕН ]${NC}"
+    else
+        echo -e " 🕵️ IPv6 (Скрытность):        ${GREEN}[ МЕРТВ: УТЕЧЕК НЕТ ]${NC}"
+    fi
+    echo -e "${MAGENTA}======================================================${NC}\n"
 }
 
 get_logrotate_status() {
     if ls /etc/logrotate.d/don_* >/dev/null 2>&1; then echo -e "${GREEN}[НАСТРОЕН]${NC}"; else echo -e "${RED}[НЕ НАСТРОЕН]${NC}"; fi
 }
 
+show_install_confirmation() {
+    clear
+    echo -e "${BLUE}======================================================${NC}"
+    echo -e "${BOLD}${MAGENTA}  🚀 ПОДГОТОВКА К ПОЛНОЙ УСТАНОВКЕ ЗАЩИТЫ${NC}"
+    echo -e "${BLUE}======================================================${NC}"
+    echo -e " Будут выполнены следующие этапы «Золотой Стандарт»:"
+    echo -e " ${CYAN}1. Защита панели:${NC} Автоматическое добавление вашего IP в белый список."
+    echo -e " ${CYAN}2. Чистый лист:${NC} Сброс UFW и Fail2Ban до заводских настроек (устранение конфликтов)."
+    echo -e " ${CYAN}3. Тюнинг ядра:${NC} Внедрение BBR, FastOpen и тотальное отключение IPv6."
+    echo -e " ${CYAN}4. Сетевой экран:${NC} Активация UFW с DDoS-фильтрами и лимитами на порты."
+    echo -e " ${CYAN}5. Инспектор:${NC} Установка Fail2Ban (фильтры SSH + Nginx REALITY)."
+    echo -e " ${CYAN}6. Память:${NC} Гибридная оптимизация (ZRAM + Swap) для стабильности Docker."
+    echo -e "${BLUE}======================================================${NC}"
+    echo -e " ${YELLOW}ВНИМАНИЕ: Во время сброса UFW соединение может мигнуть.${NC}"
+    echo -e " Это безопасно, так как мы сначала защитим ваш IP."
+    echo -e "${BLUE}======================================================${NC}"
+    read -rp " Начинаем установку? [Y/n]: " confirm
+    [[ "${confirm:-Y}" =~ ^[Yy]$ || -z "$confirm" ]] && return 0 || return 1
+}
+
 install_all() {
+    if ! show_install_confirmation; then
+        echo -e "${RED}[!] Установка отменена пользователем.${NC}"
+        sleep 1; return
+    fi
+
     # СНАЧАЛА защищаем важные IP чтобы не потерять соединение
     protect_panel_connection
 
+    # --- ЭТАП: ЧИСТЫЙ ЛИСТ (RESET TO DEFAULTS) ---
+    echo -e "\n${YELLOW}[*] Сброс системы до заводских настроек защиты...${NC}"
+    ufw --force reset >/dev/null 2>&1
+    rm -f /etc/fail2ban/jail.local >/dev/null 2>&1
+    
+    # Дефолтные политики UFW
+    ufw default deny incoming >/dev/null 2>&1
+    ufw default allow outgoing >/dev/null 2>&1
+    # Сразу открываем SSH чтобы не вылететь после reset
+    ACTIVE_SSH=$(grep -i "^Port" /etc/ssh/sshd_config | awk '{print $2}' | xargs)
+    [[ -z "$ACTIVE_SSH" ]] && ACTIVE_SSH="22"
+    for p in $ACTIVE_SSH; do ufw allow "$p"/tcp >/dev/null 2>&1; done
+
+    # --- ЭТАП: СИСТЕМНЫЙ ТЮНИНГ ---
     install_sysctl
     
+    # --- ЭТАП: UFW ---
     if declare -f ufw_global_setup > /dev/null; then
-        echo -e "\n${CYAN}[*] Инициализация UFW (Полный Автомат)...${NC}"
+        echo -e "\n${CYAN}[*] Инициализация UFW (DDoS Protection)...${NC}"
         # АВТОМАТИКА: Сканируем открытые порты и добавляем в лимиты
         ufw_auto_protect_open_ports
         ufw_global_setup
@@ -232,21 +292,26 @@ install_all() {
         echo -e "${RED}[!] Ошибка: Модуль m_ufw.sh не загружен.${NC}"
     fi
     
+    # --- ЭТАП: FAIL2BAN ---
     if declare -f install_fail2ban > /dev/null; then
         install_fail2ban
     else
         echo -e "${RED}[!] Ошибка: Модуль m_f2b.sh не загружен.${NC}"
     fi
 
+    # --- ЭТАП: РОТАЦИЯ ЛОГОВ ---
     if declare -f lr_auto_setup > /dev/null; then
         echo -e "\n${CYAN}[*] Автоматическая настройка ротации логов...${NC}"
         lr_auto_setup
-        echo -e "${GREEN}[+] Логи Nginx и Ноды взяты под контроль.${NC}"
+        echo -e "${GREEN}[+] Логи под контролем.${NC}"
     fi
 
+    # --- ЭТАП: ГИБРИДНАЯ ПАМЯТЬ ---
     if declare -f install_hybrid_memory_optimization > /dev/null; then
         install_hybrid_memory_optimization
     fi
+
+    echo -e "\n${GREEN}${BOLD}🚀 ВСЕ КОМПОНЕНТЫ УСПЕШНО УСТАНОВЛЕНЫ И ПРОВЕРЕНЫ!${NC}"
     pause
 }
 

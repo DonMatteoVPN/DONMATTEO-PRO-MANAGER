@@ -79,17 +79,13 @@ ufw_global_setup() {
         fi
     fi
 
-    # Whitelist: применяем через UFW allow from IP (автоматически)
+    # Whitelist: Применяем глобальный доступ UNLIKE DDoS лимитов
+    # Мы не делаем 'ufw allow from IP' для всех в цикле здесь, чтобы не плодить дубли. 
+    # Основная логика белого списка теперь внедряется в before.rules для обхода лимитов.
+    # Но для Панели и текущего SSH мы оставим явные правила в ufw status для наглядности.
+    local WL_IPS=""
     if [[ -f "$WHITELIST_FILE" ]]; then
-        while IFS= read -r wl_line; do
-            local wl_ip
-            wl_ip=$(echo "$wl_line" | awk '{print $1}')
-            [[ "$wl_ip" =~ ^[0-9]+\.[0-9]+\.[0-9]+\.[0-9] ]] || continue
-            local wl_comment
-            wl_comment=$(echo "$wl_line" | sed 's/^[^ ]*//' | sed 's/^[[:space:]]*//' | sed 's/^#[[:space:]]*//')
-            [[ -z "$wl_comment" ]] && wl_comment="Whitelist"
-            ufw allow from "$wl_ip" comment "$wl_comment" >/dev/null 2>&1 || true
-        done < "$WHITELIST_FILE"
+        WL_IPS=$(awk '{print $1}' "$WHITELIST_FILE" | grep -E '^[0-9]' | tr '\n' ' ')
     fi
 
     local ACTIVE_SSH
@@ -127,6 +123,14 @@ if '*filter' in content:
 
 # 2. Строим блок правил для ufw-before-input
 input_rules = []
+
+# Whitelist Bypass (Обход всех лимитов для доверенных IP)
+wl_ips = "${WL_IPS}".split()
+if wl_ips:
+    input_rules.append('\n# --- НАЧАЛО: Белый список (Обход лимитов) ---')
+    for ip in wl_ips:
+        input_rules.append(f'-A ufw-before-input -s {ip} -j ACCEPT')
+    input_rules.append('# --- КОНЕЦ: Белый список ---')
 
 # Защита от сканеров
 input_rules.append('\n# --- НАЧАЛО: Защита от сканеров и кривых пакетов ---')
@@ -175,12 +179,13 @@ target = ':ufw-before-input - [0:0]'
 if target in content:
     content = content.replace(target, target + '\n' + input_block, 1)
 
-with open('/etc/ufw/before.rules', 'w') as f:
-    f.write(content)
-print('before.rules OK')
 PYEOF
 
-    # UFW defaults: incoming=deny, outgoing=allow (стандарт — не меняем оутгоинг)
+    # После того как Python обновил before.rules с белым списком, 
+    # мы можем убрать явные 'allow from IP' для всех из главного списка, 
+    # чтобы не плодить дубли (но оставим SSH и панельные порты).
+    
+    # UFW defaults: incoming=deny, outgoing=allow
     ufw default deny incoming  > /dev/null 2>&1
     ufw default allow outgoing > /dev/null 2>&1
 

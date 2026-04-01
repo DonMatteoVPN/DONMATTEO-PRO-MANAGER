@@ -202,82 +202,63 @@ manage_swap() {
         clear
         echo -e "${BLUE}======================================================${NC}"
         echo -e "${BOLD}${MAGENTA}  ⚙️ СИСТЕМНЫЕ НАСТРОЙКИ (SWAP / ПАМЯТЬ) ${NC}$(get_swap_status)"
-        echo -e "${GRAY} Интеллектуальное управление оперативной памятью сервера.${NC}"
+        echo -e " ${BOLD}${CYAN}Интеллектуальное управление оперативной памятью сервера.${NC}"
         echo -e "${BLUE}======================================================${NC}"
         
         local RAM_KB=$(grep MemTotal /proc/meminfo | awk '{print $2}')
         local RAM_MB=$((RAM_KB / 1024))
-        local RAM_GB=$((RAM_MB / 1024))
-        [[ $RAM_GB -eq 0 ]] && RAM_GB=1 
+        local RAM_GB=$(( (RAM_MB + 512) / 1024 )) # Округление вверх до ближайшего ГБ
         
-        local REC_ZRAM_PERCENT
-        if [ "$RAM_GB" -le 1 ]; then REC_ZRAM_PERCENT=60;
-        elif [ "$RAM_GB" -eq 2 ]; then REC_ZRAM_PERCENT=50;
-        else REC_ZRAM_PERCENT=25; fi
-
-        local REC_DISK_SWAP
-        if [ "$RAM_GB" -le 2 ]; then REC_DISK_SWAP=$((RAM_GB * 2)); elif [ "$RAM_GB" -le 8 ]; then REC_DISK_SWAP=$RAM_GB; else REC_DISK_SWAP=4; fi
-
+        # Динамические рекомендации ИИ
+        local REC_ZRAM
+        local REC_SWAP
+        if [ "$RAM_MB" -le 1024 ]; then
+            REC_ZRAM="60%"; REC_SWAP="2 GB"
+        elif [ "$RAM_MB" -le 2048 ]; then
+            REC_ZRAM="50%"; REC_SWAP="2 GB"
+        elif [ "$RAM_MB" -le 4096 ]; then
+            REC_ZRAM="40%"; REC_SWAP="4 GB"
+        else
+            REC_ZRAM="25%"; REC_SWAP="4 GB"
+        fi
+        
         echo -e "  Текущая физическая RAM: ${GREEN}${RAM_GB} GB (${RAM_MB} MB)${NC}"
         echo -e "${BLUE}------------------------------------------------------${NC}"
-        echo -e " ${GREEN}1.${NC} 🌪️ ${BOLD}Умная установка ZRAM (Турбо-сжатие ОЗУ)${NC} ${YELLOW}[ РЕКОМЕНДУЕТСЯ ]${NC}"
-        echo -e "    ${GRAY}└─ Идеально для VPN. ИИ предлагает сжатие: ${GREEN}${REC_ZRAM_PERCENT}%${NC}"
-        echo -e " ${YELLOW}2.${NC} 💽 Классический Disk Swap (На жестком диске)"
-        echo -e "    ${GRAY}└─ ИИ предлагает размер: ${YELLOW}${REC_DISK_SWAP} GB${NC}"
+        echo -e " ${GREEN}1.${NC} 🌪️  ${BOLD}Установка ГИБРИДНОГО режима (ZRAM + Swap)${NC} ${YELLOW}[ РЕКОМЕНДУЕТСЯ ]${NC}"
+        echo -e "    ${GRAY}└─ Идеально для VPN. ИИ предлагает: ZRAM (${REC_ZRAM}) + Swap (${REC_SWAP})${NC}"
         echo -e "${BLUE}------------------------------------------------------${NC}"
-        echo -e " ${RED}3.${NC} 🗑️  Полностью отключить и удалить ZRAM / Swap"
-        echo -e " ${CYAN}4.${NC} 📊 Подробный статус оперативной памяти"
+        echo -e " ${CYAN}2.${NC} 🧩 Только ZRAM (Турбо-сжатие в ОЗУ)"
+        echo -e "    ${GRAY}└─ Рекомендуемое сжатие: ${CYAN}${REC_ZRAM}${NC}"
+        echo -e " ${CYAN}3.${NC} 💽 Только Disk Swap (На жестком диске)"
+        echo -e "    ${GRAY}└─ Рекомендуемый размер: ${CYAN}${REC_SWAP}${NC}"
         echo -e "${BLUE}------------------------------------------------------${NC}"
-        echo -e " ${MAGENTA}${BOLD}5. 📖 ЧИТАТЬ ИНСТРУКЦИЮ (ЛИМИТЫ DOCKER И ПАМЯТЬ)${NC}"
+        echo -e " ${RED}4.${NC} 🗑️  Полностью отключить и удалить ZRAM / Swap"
+        echo -e " ${GREEN}5.${NC} 📊 Подробный статус оперативной памяти"
+        echo -e "${BLUE}------------------------------------------------------${NC}"
+        echo -e " ${MAGENTA}${BOLD}6. 📖 ЧИТАТЬ ИНСТРУКЦИЮ (ЛИМИТЫ DOCKER И ПАМЯТЬ)${NC}"
         echo -e " ${CYAN}0.${NC} ↩️  Назад"
         read -p ">> " choice
 
         case $choice in
-            1)
-                clear
-                echo -e "${MAGENTA}=== УСТАНОВКА УМНОГО ZRAM ===${NC}"
-                echo -e "Скрипт проанализировал вашу ОЗУ (${GREEN}${RAM_MB} MB${NC})."
-                echo -e "Рекомендуемый объем виртуального диска ZRAM: ${GREEN}${REC_ZRAM_PERCENT}% от ОЗУ${NC}\n"
-                echo -e "${YELLOW}Выберите действие:${NC}"
-                echo -e " 1. Применить ИИ-рекомендацию (${GREEN}${REC_ZRAM_PERCENT}%${NC})"
-                echo -e " 2. Вписать процент вручную (Например: 50)"
-                echo -e " 0. Отмена"
-                read -p ">> " zram_ch
-                case $zram_ch in
-                    1) make_zram_smart "$REC_ZRAM_PERCENT"; pause ;;
-                    2) 
-                       read -p "Введите процент (10-100): " custom_zram
-                       if [[ "$custom_zram" =~ ^[0-9]+$ ]] && [ "$custom_zram" -ge 10 ] && [ "$custom_zram" -le 100 ]; then 
-                           make_zram_smart "$custom_zram"; 
-                       else 
-                           echo -e "${RED}Ошибка: неверное значение.${NC}"; 
-                       fi
-                       pause ;;
-                    0) continue ;;
-                esac
-                ;;
+            1) 
+                echo -e "\n${CYAN}[*] Запуск гибридной оптимизации...${NC}"
+                install_hybrid_memory_optimization
+                pause ;;
             2)
-                clear
-                echo -e "${MAGENTA}=== УСТАНОВКА DISK SWAP ===${NC}"
-                echo -e "Рекомендуемый размер: ${GREEN}${REC_DISK_SWAP} GB${NC}\n"
-                echo -e "${YELLOW}Выберите действие:${NC}"
-                echo -e " 1. Применить ИИ-рекомендацию (${GREEN}${REC_DISK_SWAP} GB${NC})"
-                echo -e " 2. Вписать свой размер вручную (в Гигабайтах)"
-                echo -e " 0. Отмена"
-                read -p ">> " swap_ch
-                case $swap_ch in
-                    1) make_swap "$REC_DISK_SWAP"; pause ;;
-                    2) 
-                       read -p "Введите размер в GB (только цифра): " custom_swap
-                       if [[ "$custom_swap" =~ ^[0-9]+$ ]] && [ "$custom_swap" -gt 0 ]; then make_swap "$custom_swap"; else echo -e "${RED}Ошибка: введите целое положительное число.${NC}"; fi
-                       pause ;;
-                    0) continue ;;
-                esac
-                ;;
-            3) remove_all_swap; pause ;;
-            4) show_memory_status ;;
-            5) show_memory_instructions ;;
+                read -p "Введите процент сжатия (10-100, по умолчанию 60): " custom_zram
+                [[ -z "$custom_zram" ]] && custom_zram=60
+                make_zram_smart "$custom_zram"
+                pause ;;
+            3)
+                read -p "Введите размер в GB (например, 2): " custom_swap
+                [[ -z "$custom_swap" ]] && custom_swap=2
+                make_swap "$custom_swap"
+                pause ;;
+            4) remove_all_swap; pause ;;
+            5) show_memory_status ;;
+            6) show_memory_instructions ;;
             0) return ;;
+            *) echo -e "${RED}Ошибка: Неверный выбор.${NC}"; sleep 1 ;;
         esac
     done
 }

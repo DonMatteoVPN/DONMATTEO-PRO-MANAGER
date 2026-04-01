@@ -149,30 +149,38 @@ show_f2b_help() {
 }
 
 show_f2b_stats() {
-    clear; echo -e "${MAGENTA}=== ПОДРОБНАЯ СТАТИСТИКА ЗАЩИТЫ FAIL2BAN ===${NC}\n"
-    for jail in sshd nginx-scanners; do
-        local raw_status=$(fail2ban-client status "$jail" 2>/dev/null || echo "")
-        [[ -z "$raw_status" ]] && continue
-        
-        local cur_fail=$(echo "$raw_status" | grep "Currently failed:" | sed 's/[^0-9]*//g')
-        local tot_fail=$(echo "$raw_status" | grep "Total failed:" | sed 's/[^0-9]*//g')
-        local cur_ban=$(echo "$raw_status" | grep "Currently banned:" | sed 's/[^0-9]*//g')
-        local tot_ban=$(echo "$raw_status" | grep "Total banned:" | sed 's/[^0-9]*//g')
-        local banned_ips=$(echo "$raw_status" | grep "Banned IP list:" | awk -F':' '{print $2}' | xargs)
-        [[ -z "$banned_ips" ]] && banned_ips="Чисто"
-        
-        if [[ "$jail" == "sshd" ]]; then
-            echo -e "${CYAN}[ 🛡️  ЗАЩИТА SSH (Брутфорс паролей) ]${NC}"
-        else
-            echo -e "${CYAN}[ 🛡️  ЗАЩИТА NGINX (Reality + XHTTP + Сканеры) ]${NC}"
-        fi
-
-        echo -e "  ├─ ⚠️  Подозрительных прямо сейчас:   ${YELLOW}${cur_fail:-0}${NC}"
-        echo -e "  ├─ 📈 Всего попыток атаки забанено:  ${YELLOW}${tot_fail:-0}${NC}"
-        echo -e "  ├─ ⛔ Заблокировано IP в данный момент: ${RED}${cur_ban:-0}${NC}"
-        echo -e "  ├─ 💀 Всего трупов за всё время:      ${RED}${tot_ban:-0}${NC}"
-        echo -e "  └─ 🚫 Список забаненных:             ${RED}${banned_ips}${NC}\n"
-    done
+    clear
+    echo -e "${BLUE}======================================================${NC}"
+    echo -e "${BOLD}${MAGENTA}  📊 ПОДРОБНАЯ СТАТИСТИКА ЗАЩИТЫ FAIL2BAN${NC}"
+    echo -e "${BLUE}======================================================${NC}"
+    
+    local active_jails
+    active_jails=$(fail2ban-client status | grep "Jail list:" | sed 's/.*Jail list://' | tr ',' ' ')
+    
+    if [[ -z "$active_jails" ]]; then
+        echo -e "${RED}[!] Активные защиты (jails) не обнаружены.${NC}"
+        echo -e "${GRAY}Попробуйте перезапустить защиту через меню установки.${NC}"
+    else
+        for jail in $active_jails; do
+            local raw_status
+            raw_status=$(fail2ban-client status "$jail" 2>/dev/null)
+            [[ -z "$raw_status" ]] && continue
+            
+            local cur_fail=$(echo "$raw_status" | grep "Currently failed:" | sed 's/[^0-9]*//g')
+            local tot_fail=$(echo "$raw_status" | grep "Total failed:" | sed 's/[^0-9]*//g')
+            local cur_ban=$(echo "$raw_status" | grep "Currently banned:" | sed 's/[^0-9]*//g')
+            local tot_ban=$(echo "$raw_status" | grep "Total banned:" | sed 's/[^0-9]*//g')
+            local banned_ips=$(echo "$raw_status" | grep "Banned IP list:" | awk -F':' '{print $2}' | xargs)
+            [[ -z "$banned_ips" ]] && banned_ips="Чисто"
+            
+            echo -e "${CYAN}[ 🛡️  JAIL: ${jail^^} ]${NC}"
+            echo -e "  ├─ ⚠️  Подозрительных сейчас:       ${YELLOW}${cur_fail:-0}${NC}"
+            echo -e "  ├─ 📈 Всего попыток атак:          ${YELLOW}${tot_fail:-0}${NC}"
+            echo -e "  ├─ ⛔ Заблокировано сейчас:        ${RED}${cur_ban:-0}${NC}"
+            echo -e "  ├─ 💀 Всего банов за всё время:    ${RED}${tot_ban:-0}${NC}"
+            echo -e "  └─ 🚫 Список забаненных:           ${RED}${banned_ips}${NC}\n"
+        done
+    fi
     pause
 }
 
