@@ -174,12 +174,12 @@ manage_swap() {
         [[ $RAM_GB -eq 0 ]] && RAM_GB=1 
         
         local REC_ZRAM_PERCENT
-        if[ "$RAM_GB" -le 1 ]; then REC_ZRAM_PERCENT=60;
-        elif[ "$RAM_GB" -eq 2 ]; then REC_ZRAM_PERCENT=50;
+        if [ "$RAM_GB" -le 1 ]; then REC_ZRAM_PERCENT=60;
+        elif [ "$RAM_GB" -eq 2 ]; then REC_ZRAM_PERCENT=50;
         else REC_ZRAM_PERCENT=25; fi
 
         local REC_DISK_SWAP
-        if[ "$RAM_GB" -le 2 ]; then REC_DISK_SWAP=$((RAM_GB * 2)); elif [ "$RAM_GB" -le 8 ]; then REC_DISK_SWAP=$RAM_GB; else REC_DISK_SWAP=4; fi
+        if [ "$RAM_GB" -le 2 ]; then REC_DISK_SWAP=$((RAM_GB * 2)); elif [ "$RAM_GB" -le 8 ]; then REC_DISK_SWAP=$RAM_GB; else REC_DISK_SWAP=4; fi
 
         echo -e "  Текущая физическая RAM: ${GREEN}${RAM_GB} GB (${RAM_MB} MB)${NC}"
         echo -e "${BLUE}------------------------------------------------------${NC}"
@@ -210,7 +210,7 @@ manage_swap() {
                     1) make_zram_smart "$REC_ZRAM_PERCENT"; pause ;;
                     2) 
                        read -p "Введите процент (10-100): " custom_zram
-                       if [[ "$custom_zram" =~ ^[0-9]+$ ]] && [ "$custom_zram" -ge 10 ] &&[ "$custom_zram" -le 100 ]; then 
+                       if [[ "$custom_zram" =~ ^[0-9]+$ ]] && [ "$custom_zram" -ge 10 ] && [ "$custom_zram" -le 100 ]; then 
                            make_zram_smart "$custom_zram"; 
                        else 
                            echo -e "${RED}Ошибка: неверное значение.${NC}"; 
