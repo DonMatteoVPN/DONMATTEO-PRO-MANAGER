@@ -90,10 +90,10 @@ do_update() {
     if download_and_verify "don" "${BASE_DIR}/don.new"; then
         mv "${BASE_DIR}/don.new" "${BASE_DIR}/don"
         chmod +x "${BASE_DIR}/don"
-        ((updated_count++))
+        updated_count=$((updated_count + 1))
         echo -e "\r${GREEN}  ✓ don${NC}                        "
     else
-        ((failed_count++))
+        failed_count=$((failed_count + 1))
         echo -e "\r${RED}  ✗ don (ошибка скачивания)${NC}  "
     fi
 
@@ -108,10 +108,10 @@ do_update() {
         if download_and_verify "$remote_path" "${core_path}.new"; then
             mv "${core_path}.new" "$core_path"
             chmod +x "$core_path"
-            ((updated_count++))
+            updated_count=$((updated_count + 1))
             echo -e "\r${GREEN}  ✓ ${mod_name}${NC}                        "
         else
-            ((failed_count++))
+            failed_count=$((failed_count + 1))
             echo -e "\r${RED}  ✗ ${mod_name} (ошибка)${NC}  "
             rm -f "${core_path}.new" 2>/dev/null
         fi

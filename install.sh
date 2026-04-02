@@ -179,10 +179,10 @@ while IFS= read -r mod_name; do
     if install_download "$remote_url" "${local_path}.tmp" 30; then
         mv "${local_path}.tmp" "$local_path"
         chmod +x "$local_path"
-        ((ok_count++))
+        ok_count=$((ok_count + 1))
         echo -e "\r  ${GREEN}✓ ${mod_name}${NC}                          "
     else
-        ((fail_count++))
+        fail_count=$((fail_count + 1))
         echo -e "\r  ${RED}✗ ${mod_name} (ошибка)${NC}  "
         rm -f "${local_path}.tmp" 2>/dev/null || true
     fi
