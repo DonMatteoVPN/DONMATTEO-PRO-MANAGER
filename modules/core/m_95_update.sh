@@ -14,10 +14,9 @@
 #   - БАГ #1: Мягкая SHA256 проверка скачанных модулей
 #   - БАГ #5: Правильное сравнение версий через sort -V
 # =============================================================================
-
 # --- Переменные ---
-UPDATE_REPO_URL="${REPO_URL:-https://raw.githubusercontent.com/DonMatteoVPN/DONMATTEO-PRO-MANAGER/main}"
-UPDATE_API_URL="https://api.github.com/repos/DonMatteoVPN/DONMATTEO-PRO-MANAGER/commits/main"
+UPDATE_REPO_URL="${REPO_URL:-https://raw.githubusercontent.com/DonMatteoVPN/DONMATTEO-PRO-MANAGER/${BRANCH:-main}}"
+UPDATE_API_URL="https://api.github.com/repos/DonMatteoVPN/DONMATTEO-PRO-MANAGER/commits/${BRANCH:-main}"
 VERSION_FILE="${BASE_DIR}/etc/version.txt"
 CHECKSUM_MANIFEST="${BASE_DIR}/etc/checksums.sha256"  # Мягкая проверка
 

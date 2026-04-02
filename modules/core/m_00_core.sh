@@ -18,6 +18,7 @@ export CORE_DIR="${MOD_DIR}/core"
 export MOD_LIST_FILE="${BASE_DIR}/modules.list"
 export FAST_MIRROR=""
 export AUDIT_LOG="/var/log/don_audit.log"
+export BRANCH="${BRANCH:-main}"
 
 # --- Список зеркал для обхода блокировок GitHub ---
 # ДЛЯ ЧАЙНИКОВ: Если GitHub заблокирован — скрипт автоматически использует зеркала.
@@ -33,7 +34,7 @@ GH_PROXIES=(
     "https://mirror.ghproxy.cc/"
 )
 
-export GH_CDN="https://cdn.jsdelivr.net/gh/DonMatteoVPN/DONMATTEO-PRO-MANAGER@main"
+export GH_CDN="https://cdn.jsdelivr.net/gh/DonMatteoVPN/DONMATTEO-PRO-MANAGER@${BRANCH}"
 
 # =============================================================================
 # DNS: Умное управление — НЕ ломаем systemd-resolved
@@ -116,11 +117,11 @@ find_fastest_mirror() {
     echo -e "${CYAN}[*] Поиск наилучшего канала скачивания...${NC}"
     local TS; TS=$(date +%s)
     local candidates=(
-        "https://raw.githubusercontent.com/DonMatteoVPN/DONMATTEO-PRO-MANAGER/main"
-        "https://cdn.jsdelivr.net/gh/DonMatteoVPN/DONMATTEO-PRO-MANAGER@main"
-        "https://mirror.ghproxy.com/https://raw.githubusercontent.com/DonMatteoVPN/DONMATTEO-PRO-MANAGER/main"
-        "https://ghproxy.net/https://raw.githubusercontent.com/DonMatteoVPN/DONMATTEO-PRO-MANAGER/main"
-        "https://gh.api.99988866.xyz/https://raw.githubusercontent.com/DonMatteoVPN/DONMATTEO-PRO-MANAGER/main"
+        "https://raw.githubusercontent.com/DonMatteoVPN/DONMATTEO-PRO-MANAGER/${BRANCH}"
+        "https://cdn.jsdelivr.net/gh/DonMatteoVPN/DONMATTEO-PRO-MANAGER@${BRANCH}"
+        "https://mirror.ghproxy.com/https://raw.githubusercontent.com/DonMatteoVPN/DONMATTEO-PRO-MANAGER/${BRANCH}"
+        "https://ghproxy.net/https://raw.githubusercontent.com/DonMatteoVPN/DONMATTEO-PRO-MANAGER/${BRANCH}"
+        "https://gh.api.99988866.xyz/https://raw.githubusercontent.com/DonMatteoVPN/DONMATTEO-PRO-MANAGER/${BRANCH}"
     )
 
     for base in "${candidates[@]}"; do
@@ -155,7 +156,7 @@ smart_curl() {
     # --- МЕТОД 1: Быстрое кэшированное зеркало ---
     if [[ -n "${FAST_MIRROR:-}" && "$url" == *"DONMATTEO-PRO-MANAGER"* ]]; then
         local relative_path
-        relative_path=$(echo "$url" | sed 's|.*/DONMATTEO-PRO-MANAGER/main/||; s|.*/DONMATTEO-PRO-MANAGER@main/||')
+        relative_path=$(echo "$url" | sed "s|.*/DONMATTEO-PRO-MANAGER/${BRANCH}/||; s|.*/DONMATTEO-PRO-MANAGER@${BRANCH}/||")
         if curl -fsSL --connect-timeout 3 --max-time "$timeout" \
             "${FAST_MIRROR}/${relative_path}" -o "$output" >"$debug_out" 2>&1; then
             return 0
@@ -202,7 +203,7 @@ smart_curl() {
                 "${proxy}${clean_url}" -o "$output" >"$debug_out" 2>&1; then
                 echo -e "\r${GREEN}[+] Скачано через зеркало: ${proxy}${NC}                    "
                 # Кэшируем успешное зеркало
-                local mirror_base="${proxy}https://raw.githubusercontent.com/DonMatteoVPN/DONMATTEO-PRO-MANAGER/main"
+                local mirror_base="${proxy}https://raw.githubusercontent.com/DonMatteoVPN/DONMATTEO-PRO-MANAGER/${BRANCH}"
                 echo "$mirror_base" > "${BASE_DIR}/etc/.mirror.cache"
                 export FAST_MIRROR="$mirror_base"
                 return 0

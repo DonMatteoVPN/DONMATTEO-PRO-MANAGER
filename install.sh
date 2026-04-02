@@ -22,7 +22,8 @@ set -euo pipefail
 # =============================================================================
 # ПЕРВИЧНЫЕ ПЕРЕМЕННЫЕ (до загрузки ядра)
 # =============================================================================
-REPO_RAW="https://raw.githubusercontent.com/DonMatteoVPN/DONMATTEO-PRO-MANAGER/main"
+BRANCH="${BRANCH:-main}"
+REPO_RAW="https://raw.githubusercontent.com/DonMatteoVPN/DONMATTEO-PRO-MANAGER/${BRANCH}"
 BASE_DIR="/opt/remnawave/DONMATTEO-PRO-MANAGER"
 MOD_DIR="${BASE_DIR}/modules"
 CORE_DIR="${MOD_DIR}/core"
@@ -43,7 +44,7 @@ GH_PROXIES=(
     "https://gh.api.99988866.xyz/"
     "https://github.moeyy.xyz/"
 )
-GH_CDN="https://cdn.jsdelivr.net/gh/DonMatteoVPN/DONMATTEO-PRO-MANAGER@main"
+GH_CDN="https://cdn.jsdelivr.net/gh/DonMatteoVPN/DONMATTEO-PRO-MANAGER@${BRANCH}"
 
 # =============================================================================
 # ПРОВЕРКИ

@@ -44,6 +44,11 @@
 bash <(curl -fsSL https://raw.githubusercontent.com/DonMatteoVPN/DONMATTEO-PRO-MANAGER/main/install.sh)
 ```
 
+```bash
+# DEV ВЕРСИЯ Скачиваем установщик и запускаем:
+export BRANCH=dev; bash <(curl -fsSL https://raw.githubusercontent.com/DonMatteoVPN/DONMATTEO-PRO-MANAGER/dev/install.sh)
+```
+
 **Если GitHub заблокирован** — установщик автоматически найдёт рабочее зеркало.
 
 После установки запускай менеджер командой:
