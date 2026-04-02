@@ -1,196 +1,220 @@
 #!/bin/bash
-# ======================================================================
-# Установщик TRAFFICGUARD PRO MANAGER (Standardized v3 - NO CACHE)
-# ======================================================================
+# =============================================================================
+# УСТАНОВЩИК: install.sh
+# =============================================================================
+# Этот скрипт устанавливает DONMATTEO PRO MANAGER на твой сервер.
+#
+# ДЛЯ ЧАЙНИКОВ: Запусти одну команду — и всё установится автоматически:
+#   bash install.sh
+#
+# Что делает этот скрипт:
+#   1. Создаёт папки для менеджера
+#   2. Скачивает все модули с GitHub (с умным обходом блокировок)
+#   3. Устанавливает главную команду "don" в систему
+#   4. Переносит старые файлы если это обновление
+#
+# Скрипт ИДЕМПОТЕНТЕН — можно запускать повторно, это безопасно.
+# (Умное слово: идемпотентен = повторный запуск не навредит системе)
+# =============================================================================
 
-# Основные настройки
-BASE_DIR="/opt/remnawave/DONMATTEO-PRO-MANAGER"
-BIN_PATH="/usr/local/bin/don"
+set -euo pipefail
+
+# =============================================================================
+# ПЕРВИЧНЫЕ ПЕРЕМЕННЫЕ (до загрузки ядра)
+# =============================================================================
 REPO_RAW="https://raw.githubusercontent.com/DonMatteoVPN/DONMATTEO-PRO-MANAGER/main"
+BASE_DIR="/opt/remnawave/DONMATTEO-PRO-MANAGER"
+MOD_DIR="${BASE_DIR}/modules"
+CORE_DIR="${MOD_DIR}/core"
+CONF_DIR="${BASE_DIR}/etc"
+BIN_LINK="/usr/local/bin/don"
 
-RED='\033[0;31m'
-GREEN='\033[0;32m'
-CYAN='\033[0;36m'
-YELLOW='\033[1;33m'
-BOLD='\033[1m'
-MAGENTA='\033[0;35m'
-GRAY='\033[0;90m'
-NC='\033[0m'
+# Цвета (нужны до загрузки модулей)
+RED='\033[0;31m'; GREEN='\033[0;32m'; YELLOW='\033[1;33m'
+BLUE='\033[0;34m'; CYAN='\033[0;36m'; MAGENTA='\033[0;35m'
+GRAY='\033[0;90m'; NC='\033[0m'; BOLD='\033[1m'
 
-# 0. ОЧИСТКА И МИГРАЦИЯ (Защита от конфликтов)
-cleanup_legacy() {
-    echo -e "${CYAN}[*] Глубокая очистка системы от старых версий...${NC}"
-    
-    # 1. Удаляем призрачные бинарники
-    if [[ -f "/usr/local/bin/don" ]]; then
-        rm -f "/usr/local/bin/don"
+# Зеркала GitHub для обхода блокировок (те же что в m_00_core.sh)
+GH_PROXIES=(
+    "https://mirror.ghproxy.com/"
+    "https://gh-proxy.com/"
+    "https://ghproxy.net/"
+    "https://ghproxy.org/"
+    "https://gh.api.99988866.xyz/"
+    "https://github.moeyy.xyz/"
+)
+GH_CDN="https://cdn.jsdelivr.net/gh/DonMatteoVPN/DONMATTEO-PRO-MANAGER@main"
+
+# =============================================================================
+# ПРОВЕРКИ
+# =============================================================================
+if [[ $EUID -ne 0 ]]; then
+    echo -e "${RED}[!] Запустите от root: sudo bash install.sh${NC}"
+    exit 1
+fi
+
+if ! command -v curl >/dev/null 2>&1; then
+    apt-get install -y curl >/dev/null 2>&1 || \
+        { echo -e "${RED}[!] curl не найден и не удалось установить. Прервано.${NC}"; exit 1; }
+fi
+
+# =============================================================================
+# ФУНКЦИЯ СКАЧИВАНИЯ С ОБХОДОМ БЛОКИРОВОК (автономная версия для install.sh)
+# =============================================================================
+# ДЛЯ ЧАЙНИКОВ: Полная копия smart_curl из m_00_core.sh чтобы установщик
+# работал ДО загрузки ядра. После установки используется та версия.
+install_download() {
+    local url="$1"
+    local output="$2"
+    local timeout="${3:-30}"
+
+    # Метод 1: Прямой доступ
+    curl -fsSL --connect-timeout 5 --max-time "$timeout" "$url" -o "$output" >/dev/null 2>&1 && return 0
+
+    # Метод 2: CDN (jsDelivr)
+    if [[ "$url" == *"raw.githubusercontent.com"* ]]; then
+        local jsd_url
+        jsd_url=$(echo "$url" | sed -E \
+            's|https://raw.githubusercontent.com/([^/]+)/([^/]+)/([^/]+)/(.*)|https://cdn.jsdelivr.net/gh/\1/\2@\3/\4|')
+        curl -fsSL --connect-timeout 5 --max-time "$timeout" "$jsd_url" -o "$output" >/dev/null 2>&1 && return 0
     fi
 
-    # 2. Обработка основной папки проекта
-    if [[ -d "$BASE_DIR" ]]; then
-        # Если есть конфиги - спасаем их!
-        if [[ -d "${BASE_DIR}/etc" ]]; then
-            echo -e "${YELLOW} [!] Найдены существующие конфиги. Создаем временный бекап...${NC}"
-            cp -r "${BASE_DIR}/etc" "/tmp/don_conf_bak"
-        fi
-        
-        # Полная зачистка (чтобы не было старых битых модулей)
-        echo -e "${GRAY}  --> Удаление старых файлов проекта...${NC}"
-        rm -rf "$BASE_DIR"
+    # Метод 3: Зеркала GitHub
+    if [[ "$url" == *"github"* ]]; then
+        echo -e "${YELLOW}[!] Прямой доступ заблокирован. Подбор зеркала...${NC}"
+        local n=0
+        for proxy in "${GH_PROXIES[@]}"; do
+            ((n++))
+            echo -ne "\r  Зеркало [${n}/${#GH_PROXIES[@]}]..."
+            curl -fsSL --connect-timeout 3 --max-time "$timeout" \
+                "${proxy}${url}" -o "$output" >/dev/null 2>&1 && {
+                    echo -e "\r${GREEN}[+] Скачано через зеркало!${NC}            "
+                    return 0
+                }
+        done
     fi
-    
-    # 3. Восстановление структуры
-    mkdir -p "${BASE_DIR}/modules"
-    mkdir -p "${BASE_DIR}/etc"
-    
-    if [[ -d "/tmp/don_conf_bak" ]]; then
-        cp -r "/tmp/don_conf_bak/"* "${BASE_DIR}/etc/" 2>/dev/null
-        rm -rf "/tmp/don_conf_bak"
-        echo -e "${GREEN} [+] Конфигурации успешно восстановлены.${NC}"
-    fi
-}
 
-# Авто-исправление DNS
-smart_dns_fix() {
-    if ! host raw.githubusercontent.com >/dev/null 2>&1 && ! host github.com >/dev/null 2>&1; then
-        echo -e "nameserver 8.8.8.8\nnameserver 1.1.1.1" > /etc/resolv.conf
-    fi
-}
-
-# АГРЕССИВНАЯ функция скачивания с ПОЛНЫМ обходом кэша
-smart_download() {
-    local path=$1
-    local output=$2
-    local TS=$(date +%s)
-    local NANO=$(date +%N 2>/dev/null || echo $RANDOM)
-    local RAND=$(( RANDOM % 99999 ))
-    
-    echo -e "${CYAN}[*] Скачивание ${path} (обход всех кэшей)...${NC}"
-    
-    # 1. ПРИОРИТЕТ: GitHub API для получения SHA последнего коммита
-    local COMMIT_SHA=$(curl -fsSL --connect-timeout 3 --max-time 5 \
-        -H "Cache-Control: no-cache, no-store, must-revalidate" \
-        -H "Pragma: no-cache" \
-        "https://api.github.com/repos/DonMatteoVPN/DONMATTEO-PRO-MANAGER/commits/main" 2>/dev/null | \
-        grep -oP '"sha":\s*"\K[^"]+' | head -n1)
-    
-    # 2. Если получили SHA - качаем напрямую по коммиту (100% свежий файл)
-    if [[ -n "$COMMIT_SHA" && ${#COMMIT_SHA} -eq 40 ]]; then
-        echo -e "${GREEN}  └─ Используем коммит: ${COMMIT_SHA:0:7}${NC}"
-        local COMMIT_URL="https://raw.githubusercontent.com/DonMatteoVPN/DONMATTEO-PRO-MANAGER/${COMMIT_SHA}/${path}"
-        if curl -fsSL --connect-timeout 5 --max-time 20 \
-            -H "Cache-Control: no-cache, no-store, must-revalidate" \
-            -H "Pragma: no-cache" \
-            "$COMMIT_URL" -o "$output" >/dev/null 2>&1; then
-            return 0
-        fi
-    fi
-    
-    # 3. Fallback: GitHub Raw с агрессивными заголовками
-    if curl -fsSL --connect-timeout 5 --max-time 20 \
-        -H "Cache-Control: no-cache, no-store, must-revalidate" \
-        -H "Pragma: no-cache" \
-        -H "Expires: 0" \
-        "${REPO_RAW}/${path}?nocache=${TS}&r=${RAND}&n=${NANO}" -o "$output" >/dev/null 2>&1; then
+    # Метод 4: Без SSL (последний шанс, с аудит-записью)
+    echo -e "\n${YELLOW}[!] Все безопасные методы недоступны. Режим без SSL...${NC}"
+    curl -fsSLk --connect-timeout 5 --max-time "$timeout" "$url" -o "$output" >/dev/null 2>&1 && {
+        echo -e "${YELLOW}    ⚠️  Внимание: файл скачан без SSL-проверки!${NC}"
         return 0
-    fi
+    }
 
-    # 4. Фикс DNS и повтор
-    smart_dns_fix
-    if curl -fsSL --connect-timeout 5 --max-time 20 \
-        -H "Cache-Control: no-cache" \
-        "${REPO_RAW}/${path}?t=${TS}" -o "$output" >/dev/null 2>&1; then
-        return 0
-    fi
-
-    # 5. Режим "Отчаяние": без проверки SSL
-    if curl -fsSLk --connect-timeout 5 --max-time 20 \
-        "${REPO_RAW}/${path}?t=${TS}" -o "$output" >/dev/null 2>&1; then
-        return 0
-    fi
-    
-    echo -e "${RED}[!] Ошибка скачивания ${path}${NC}"
     return 1
 }
 
-if [[ $EUID -ne 0 ]]; then
-    echo -e "${RED}Запустите установку от имени root (sudo).${NC}"
-    exit 1
-fi
-
+# =============================================================================
+# БАННЕР
+# =============================================================================
 clear
-echo -e "${CYAN}================================================================${NC}"
-echo -e "${BOLD}${MAGENTA} 🚀 УСТАНОВКА / ОБНОВЛЕНИЕ TRAFFICGUARD PRO${NC}"
-echo -e "${CYAN}================================================================${NC}"
+echo -e "${BLUE}╔══════════════════════════════════════════════════════╗${NC}"
+echo -e "${BLUE}║${NC}  ${BOLD}${MAGENTA}🚀 DONMATTEO PRO MANAGER — УСТАНОВЩИК${NC}${BLUE}              ║${NC}"
+echo -e "${BLUE}╚══════════════════════════════════════════════════════╝${NC}"
+echo ""
 
-echo -e "${CYAN}[*] Подготовка структуры директорий...${NC}"
-cleanup_legacy
+# =============================================================================
+# СОЗДАНИЕ СТРУКТУРЫ ПАПОК
+# =============================================================================
+echo -e "${CYAN}[1/5] Создание структуры директорий...${NC}"
+mkdir -p "${BASE_DIR}" "${CORE_DIR}" "${CONF_DIR}" "${MOD_DIR}"
 
-# 0.2 РЕЖИМ ЛОКАЛЬНОЙ РАЗРАБОТКИ
-export IS_LOCAL="false"
-if [[ -f "./don" && -d "./modules" ]]; then
-    export IS_LOCAL="true"
-    echo -e "${YELLOW}[!] Найдена локальная копия проекта. Используем локальные файлы для установки...${NC}"
+# =============================================================================
+# РЕЗЕРВНАЯ КОПИЯ НАСТРОЕК (если это обновление)
+# =============================================================================
+echo -e "${CYAN}[2/5] Проверка существующей конфигурации...${NC}"
+if [[ -d "${CONF_DIR}" ]] && ls "${CONF_DIR}"/*.conf >/dev/null 2>&1; then
+    local_backup="${BASE_DIR}/.config_backup_$(date +%Y%m%d_%H%M%S)"
+    cp -r "${CONF_DIR}" "$local_backup" && \
+        echo -e "${GREEN}  [+] Настройки сохранены: ${local_backup}${NC}"
 fi
 
-echo -e "${CYAN}[*] Синхронизация манифеста модулей...${NC}"
-if [[ "$IS_LOCAL" == "true" ]]; then
-    cp "./modules.list" "${BASE_DIR}/modules.list" 2>/dev/null || ls modules/ > "${BASE_DIR}/modules.list"
-else
-    smart_download "modules.list" "${BASE_DIR}/modules.list"
-fi
-
-echo -e "${CYAN}[*] Установка главного ядра (don)...${NC}"
-if [[ "$IS_LOCAL" == "true" ]]; then
-    cp "./don" "$BIN_PATH"
-else
-    smart_download "don" "$BIN_PATH"
-fi
-
-if [[ ! -f "$BIN_PATH" ]]; then
-    echo -e "${RED} [!] Ошибка установки don${NC}"
+# =============================================================================
+# СКАЧИВАНИЕ ГЛАВНОГО ФАЙЛА
+# =============================================================================
+echo -e "${CYAN}[3/5] Скачивание главного файла (don)...${NC}"
+if ! install_download "${REPO_RAW}/don" "${BASE_DIR}/don" 30; then
+    echo -e "${RED}[!] КРИТИЧЕСКАЯ ОШИБКА: Не удалось скачать главный файл.${NC}"
+    echo -e "${YELLOW}    Проверь подключение к интернету.${NC}"
     exit 1
 fi
-tr -d '\r' < "$BIN_PATH" > "${BIN_PATH}.tmp" && mv "${BIN_PATH}.tmp" "$BIN_PATH"
-chmod +x "$BIN_PATH"
+chmod +x "${BASE_DIR}/don"
+echo -e "${GREEN}  [✓] don — скачан${NC}"
 
-echo -e "${CYAN}[*] Скачивание системных модулей...${NC}"
-# Читаем список модулей из скачанного манифеста
-while read -r mod; do
-    [[ -z "$mod" ]] && continue
-    echo -ne "  --> Загрузка/Копирование ${mod}... "
-    if [[ "$IS_LOCAL" == "true" && -f "./modules/${mod}" ]]; then
-        cp "./modules/${mod}" "${BASE_DIR}/modules/${mod}"
-        echo -e "${GREEN}[OK] (local)${NC}"
-    elif smart_download "modules/${mod}" "${BASE_DIR}/modules/${mod}"; then
-        tr -d '\r' < "${BASE_DIR}/modules/${mod}" > "${BASE_DIR}/modules/${mod}.tmp" && mv "${BASE_DIR}/modules/${mod}.tmp" "${BASE_DIR}/modules/${mod}"
-        echo -e "${GREEN}[OK] (remote)${NC}"
+# =============================================================================
+# СКАЧИВАНИЕ MODULES.LIST И МОДУЛЕЙ
+# =============================================================================
+echo -e "${CYAN}[4/5] Скачивание модулей...${NC}"
+
+# Скачиваем список модулей
+if ! install_download "${REPO_RAW}/modules.list" "${BASE_DIR}/modules.list" 15; then
+    echo -e "${RED}[!] Не удалось скачать modules.list!${NC}"
+    exit 1
+fi
+
+# Скачиваем install.sh (обновляем себя)
+install_download "${REPO_RAW}/install.sh" "${BASE_DIR}/install.sh" 15 >/dev/null 2>&1 || true
+chmod +x "${BASE_DIR}/install.sh" 2>/dev/null || true
+
+# Скачиваем хеш-манифест (мягко)
+install_download "${REPO_RAW}/etc/checksums.sha256" "${CONF_DIR}/checksums.sha256" 10 >/dev/null 2>&1 || true
+
+# Скачиваем каждый core-модуль
+ok_count=0
+fail_count=0
+while IFS= read -r mod_name; do
+    [[ -z "$mod_name" || "$mod_name" =~ ^# ]] && continue
+    local_path="${CORE_DIR}/${mod_name}"
+    remote_url="${REPO_RAW}/modules/core/${mod_name}"
+
+    echo -ne "  → ${mod_name}..."
+    if install_download "$remote_url" "${local_path}.tmp" 30; then
+        mv "${local_path}.tmp" "$local_path"
+        chmod +x "$local_path"
+        ((ok_count++))
+        echo -e "\r  ${GREEN}✓ ${mod_name}${NC}                          "
     else
-        echo -e "${RED}[FAIL]${NC}"
+        ((fail_count++))
+        echo -e "\r  ${RED}✗ ${mod_name} (ошибка)${NC}  "
+        rm -f "${local_path}.tmp" 2>/dev/null || true
     fi
 done < "${BASE_DIR}/modules.list"
 
-# Отдельно m_core.sh
-echo -ne "  --> Загрузка/Копирование m_core.sh... "
-if [[ "$IS_LOCAL" == "true" && -f "./modules/m_core.sh" ]]; then
-    cp "./modules/m_core.sh" "${BASE_DIR}/modules/m_core.sh"
-    echo -e "${GREEN}[OK] (local)${NC}"
-elif smart_download "modules/m_core.sh" "${BASE_DIR}/modules/m_core.sh"; then
-    tr -d '\r' < "${BASE_DIR}/modules/m_core.sh" > "${BASE_DIR}/modules/m_core.sh.tmp" && mv "${BASE_DIR}/modules/m_core.sh.tmp" "${BASE_DIR}/modules/m_core.sh"
-    echo -e "${GREEN}[OK] (remote)${NC}"
-else
-    echo -e "${RED}[FAIL]${NC}"
+echo -e "\n  ${GREEN}Загружено: ${ok_count}${NC} | ${RED}Ошибок: ${fail_count}${NC}"
+
+if [[ $fail_count -gt 0 ]]; then
+    echo -e "${YELLOW}[!] Некоторые модули не загружены. Повтори установку.${NC}"
 fi
 
-# 5. ИТОГОВАЯ ПРОВЕРКА
-installed_ver=$(grep "APP_VERSION=" "$BIN_PATH" | cut -d'"' -f2 || echo "unknown")
-chmod +x "$BIN_PATH"
+# =============================================================================
+# ФИНАЛИЗАЦИЯ: символическая ссылка + миграция
+# =============================================================================
+echo -e "${CYAN}[5/5] Финализация...${NC}"
 
-clear
-echo -e "${CYAN}================================================================${NC}"
-echo -e "${GREEN}${BOLD} 🚀 TRAFFICGUARD PRO УСПЕШНО УСТАНОВЛЕН (v${installed_ver})!${NC}"
-echo -e "${CYAN}================================================================${NC}"
-echo -e "${YELLOW} Система адаптирована под любые регионы и блокировки.${NC}"
-echo -e "${YELLOW} Все конфигурации перенесены в ${BASE_DIR}/etc/${NC}\n"
-echo -e " 👉 Просто введите в консоль команду: ${GREEN}${BOLD}don${NC}"
-echo -e "${CYAN}================================================================${NC}"
+# Устанавливаем команду "don" в систему
+ln -sf "${BASE_DIR}/don" "${BIN_LINK}" && \
+    echo -e "${GREEN}  [✓] Команда 'don' доступна в системе.${NC}"
+
+# Запоминаем текущий commit
+current_commit=$(curl -fsSL --max-time 5 \
+    "https://api.github.com/repos/DonMatteoVPN/DONMATTEO-PRO-MANAGER/commits/main" \
+    2>/dev/null | grep -oP '"sha": "\K[^"]+' | head -1 | cut -c1-7 || echo "unknown")
+echo "$current_commit" > "${CONF_DIR}/.last_commit" 2>/dev/null || true
+
+# =============================================================================
+# ИТОГ
+# =============================================================================
+echo ""
+echo -e "${BLUE}╔══════════════════════════════════════════════════════╗${NC}"
+echo -e "${BLUE}║${NC}  ${BOLD}${GREEN}✅ УСТАНОВКА ЗАВЕРШЕНА!${NC}${BLUE}                             ║${NC}"
+echo -e "${BLUE}╠══════════════════════════════════════════════════════╣${NC}"
+echo -e "${BLUE}║${NC}  📁 Путь установки: ${CYAN}${BASE_DIR}${NC}${BLUE}        ║${NC}"
+echo -e "${BLUE}║${NC}  📁 Core-модули:    ${CYAN}${CORE_DIR}${NC}${BLUE}    ║${NC}"
+echo -e "${BLUE}║${NC}  ⚙️  Настройки:      ${CYAN}${CONF_DIR}${NC}${BLUE}           ║${NC}"
+echo -e "${BLUE}╠══════════════════════════════════════════════════════╣${NC}"
+echo -e "${BLUE}║${NC}  🚀 Запусти менеджер командой: ${BOLD}${GREEN}don${NC}${BLUE}                    ║${NC}"
+echo -e "${BLUE}╚══════════════════════════════════════════════════════╝${NC}"
+echo ""
+echo -e "${YELLOW}💡 Добавить свой модуль → ${CORE_DIR}/m_XX_mymodule.sh${NC}"
+echo -e "${YELLOW}   Менеджер найдёт его автоматически при следующем запуске!${NC}"
+echo ""

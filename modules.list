@@ -1,11 +1,26 @@
-m_core.sh
-m_ufw.sh
-m_ssh.sh
-m_f2b.sh
-m_tg.sh
-m_swap.sh
-m_cleaner.sh
-m_installer.sh
-m_update.sh
-m_scanner.sh
-m_node.sh
+# Список core-модулей менеджера для установщика.
+# Формат: имя файла без пути. Файлы хранятся в modules/core/
+# Порядок загрузки задаётся числовым префиксом в имени файла (00, 10, 20, ...)
+#
+# ДЛЯ ЧАЙНИКОВ: Этот файл используется ТОЛЬКО установщиком install.sh
+# чтобы знать какие файлы скачать с GitHub. При запуске don автоматически
+# находит все m_*.sh файлы в modules/core/ — этот список не нужен.
+#
+# Чтобы добавить новый модуль:
+#   1. Создай файл modules/core/m_XX_mymodule.sh (XX = числовой приоритет)
+#   2. Добавь имя файла сюда
+#   3. Загрузи на GitHub — менеджер найдёт его сам при следующем запуске
+#
+m_00_core.sh
+m_10_helpers.sh
+m_20_config.sh
+m_30_ufw.sh
+m_40_f2b.sh
+m_50_ssh.sh
+m_60_tg.sh
+m_70_swap.sh
+m_80_cleaner.sh
+m_90_installer.sh
+m_95_update.sh
+m_96_scanner.sh
+m_97_node.sh

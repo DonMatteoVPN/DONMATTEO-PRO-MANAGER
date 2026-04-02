@@ -1,317 +1,251 @@
 #!/bin/bash
+# =============================================================================
+# DONMATTEO PRO MANAGER — Главный управляющий файл
+# =============================================================================
+# Версия: 03.000 (Полностью переписан — Единый Стандарт 2026)
+#
+# ДЛЯ ЧАЙНИКОВ: Это главный файл менеджера сервера. Когда ты вводишь
+# команду "don" в терминале, запускается именно этот файл. Он загружает
+# все нужные модули и показывает тебе главное меню с пунктами управления.
+#
+# Как это работает:
+#   1. Проверяет что ты root (иначе ничего не будет работать)
+#   2. Загружает "ядро" — базовые функции из modules/core/
+#   3. Загружает все остальные модули в правильном порядке
+#   4. Показывает красивое главное меню
+#
+# Как добавить свой модуль:
+#   Создай файл m_*.sh в папке modules/ (НЕ в modules/core/)
+#   Менеджер автоматически его найдёт при следующем запуске!
+# =============================================================================
 
-# --- ТЕКУЩАЯ ВЕРСИЯ СКРИПТА ---
-export APP_VERSION="02.234"
-export REPO_RAW="https://raw.githubusercontent.com/DonMatteoVPN/DONMATTEO-PRO-MANAGER/main"
+export DON_VERSION="03.000"
 
-# Глобальные флаги (Инициализация)
-export HAS_UPDATE="no"
-export LATEST_VER=""
-export UPDATE_AVAILABLE="false" 
-export FAST_MIRROR=""
+# =============================================================================
+# АРГУМЕНТЫ КОМАНДНОЙ СТРОКИ
+# =============================================================================
 export DEBUG="false"
-
-# Проверяем аргументы ДО set -u
-for arg in "$@"; do 
-    if [[ "$arg" == "--debug" ]]; then 
-        export DEBUG="true"
-        set -x  # Включаем трассировку команд
-    fi
+for arg in "$@"; do
+    case "$arg" in
+        --debug)        export DEBUG="true"; set -x ;;
+        --silent-clean) DO_SILENT_CLEAN="true" ;;
+        --version)      echo "DONMATTEO PRO MANAGER v${DON_VERSION}"; exit 0 ;;
+        --help)
+            echo "Использование: don [--debug] [--silent-clean] [--version]"
+            echo "  --debug         Режим трассировки команд"
+            echo "  --silent-clean  Тихая автоочистка (для cron)"
+            echo "  --version       Показать версию"
+            exit 0 ;;
+    esac
 done
 
+# =============================================================================
+# ОПРЕДЕЛЕНИЕ СИСТЕМЫ
+# =============================================================================
 export OS_TYPE="linux"
 [[ "$(uname)" == "Darwin" ]] && export OS_TYPE="macos"
 
-# Включаем set -u только если НЕ debug режим
-if [[ "$DEBUG" != "true" ]]; then
-    set -u
-fi
-
-# Глобальные цвета
-export RED='\033[0;31m'
-export GREEN='\033[0;32m'
-export YELLOW='\033[1;33m'
-export BLUE='\033[0;34m'
-export CYAN='\033[0;36m'
-export MAGENTA='\033[0;35m'
-export GRAY='\033[0;90m'
-export NC='\033[0m'
-export BOLD='\033[1m'
-
-if [[ $EUID -ne 0 ]]; then echo -e "${RED}Запустите команду от имени root (sudo).${NC}"; exit 1; fi
-
-# --- Поиск базового ядра ---
-export BASE_DIR="/opt/remnawave/DONMATTEO-PRO-MANAGER"
-export OLD_BASE="/opt/remnawave"
-
-if [[ -f "${BASE_DIR}/modules/m_core.sh" ]]; then
-    source "${BASE_DIR}/modules/m_core.sh"
-elif [[ -f "${OLD_BASE}/modules/m_core.sh" ]]; then
-    source "${OLD_BASE}/modules/m_core.sh"
-else
-    echo -e "${RED}[!] КРИТИЧЕСКАЯ ОШИБКА: Ядро m_core.sh не найдено.${NC}"
+# Проверка прав root
+if [[ $EUID -ne 0 ]]; then
+    echo -e "\033[0;31m[!] Ошибка: Запустите от имени root: sudo don\033[0m"
     exit 1
 fi
 
-# --- Миграция старых файлов (Один раз при запуске) ---
-migrate_old_files
+# =============================================================================
+# ЦВЕТА (единый стиль — не меняй без необходимости)
+# =============================================================================
+export RED='\033[0;31m'     # Ошибки, опасные действия
+export GREEN='\033[0;32m'   # Успех, включено
+export YELLOW='\033[1;33m'  # Предупреждения
+export BLUE='\033[0;34m'    # Рамки, разделители
+export CYAN='\033[0;36m'    # Информация, процессы
+export MAGENTA='\033[0;35m' # Заголовки, акценты
+export GRAY='\033[0;90m'    # Пояснения, вторичный текст
+export NC='\033[0m'         # Сброс цвета
+export BOLD='\033[1m'       # Жирный текст
 
-# --- Google DNS garanteed at startup (FIRST!) ---
-ensure_google_dns
+# =============================================================================
+# ЗАГРУЗКА ЯДРА (m_00_core.sh — обязателен!)
+# =============================================================================
+# ДЛЯ ЧАЙНИКОВ: Ядро — это самый важный файл. Без него ничего не работает.
+# Ищем его в нескольких местах на случай первого запуска или обновления.
 
-# --- Глобальные переменные путей (СТАНДАРТ v3) ---
-TG_CONF=$(ensure_module_config "tg")
-export TG_URL_FILE="${TG_CONF}/url.txt"
-export TG_LISTS_FILE="${TG_CONF}/lists.txt"
+# 1. Устанавливаем пути (do загрузки ядра)
+export BASE_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+export CONF_DIR="${BASE_DIR}/etc"
+export MOD_DIR="${BASE_DIR}/modules"
+export CORE_DIR="${MOD_DIR}/core"
+export AUDIT_LOG="/var/log/don_audit.log"
 
-F2B_CONF=$(ensure_module_config "f2b")
-export WHITELIST_FILE="${F2B_CONF}/whitelist.txt"
-export F2B_RETRY_FILE="${F2B_CONF}/maxretry.txt"
-export F2B_FIND_FILE="${F2B_CONF}/findtime.txt"
-export F2B_BAN_FILE="${F2B_CONF}/bantime.txt"
+# 2. Ищем ядро
+CORE_FILE="${CORE_DIR}/m_00_core.sh"
 
-UFW_CONF=$(ensure_module_config "ufw")
-export CONNLIMIT_FILE="${UFW_CONF}/limit_conn_ports.txt"
-export RATELIMIT_FILE="${UFW_CONF}/limit_rate_ports.txt"
-export CONN_VAL_FILE="${UFW_CONF}/limit_conn_val.txt"
-export RATE_VAL_FILE="${UFW_CONF}/limit_rate_val.txt"
-
-export MANUAL_FILE="${CONF_DIR}/tg/manual_ban.list"
-export BANTIME="24h"
-
-# ======================================================================
-# --- ФУНКЦИИ СТАТУСОВ (По умолчанию) ---
-# ======================================================================
-get_sysctl_status() {
-    if [[ "$(sysctl -n net.ipv4.tcp_syncookies 2>/dev/null)" == "1" ]]; then 
-        echo -e "${GREEN}[ВКЛЮЧЕНО]${NC}"
-    else 
-        echo -e "${RED}[НЕ УСТАНОВЛЕНО]${NC}"
-    fi
-}
-
-get_ufw_status() {
-    if [[ "${OS_TYPE:-}" == "macos" ]]; then echo -e "${YELLOW}[N/A]${NC}"; return; fi
-    if command -v ufw >/dev/null 2>&1; then
-        if ufw status 2>/dev/null | grep -qw active; then echo -e "${GREEN}[РАБОТАЕТ]${NC}"; else echo -e "${YELLOW}[ВЫКЛЮЧЕН]${NC}"; fi
-    else
-        echo -e "${RED}[НЕ УСТАНОВЛЕН]${NC}"
-    fi
-}
-
-get_f2b_status() {
-    if [[ "${OS_TYPE:-}" == "macos" ]]; then echo -e "${YELLOW}[N/A]${NC}"; return; fi
-    if command -v fail2ban-client >/dev/null 2>&1; then
-        if systemctl is-active --quiet fail2ban 2>/dev/null; then 
-            echo -e "${GREEN}[РАБОТАЕТ]${NC}"
-        else 
-            echo -e "${YELLOW}[ВКЛЮЧЕН/ОСТАНОВЛЕН]${NC}"
+if [[ ! -f "$CORE_FILE" ]]; then
+    # Fallback: ищем в старых местах (для совместимости при обновлении)
+    for fallback in \
+        "${MOD_DIR}/m_core.sh" \
+        "/opt/remnawave/modules/m_core.sh"; do
+        if [[ -f "$fallback" ]]; then
+            CORE_FILE="$fallback"
+            echo -e "\033[1;33m[!] Ядро найдено в устаревшем месте: ${fallback}\033[0m"
+            echo -e "\033[1;33m    Запусти: bash install.sh для коррекной установки\033[0m"
+            break
         fi
-    else
-        echo -e "${RED}[НЕ УСТАНОВЛЕН]${NC}"
-    fi
-}
+    done
+fi
 
-get_tg_status() {
-    if [[ "${OS_TYPE:-}" == "macos" ]]; then echo -e "${YELLOW}[N/A]${NC}"; return; fi
-    if systemctl is-active --quiet antiscan-aggregate.timer 2>/dev/null; then 
-        echo -e "${GREEN}[РАБОТАЕТ]${NC}"
-    elif [[ -f /usr/local/bin/traffic-guard ]]; then 
-        echo -e "${YELLOW}[УСТАНОВЛЕН, НО НЕ АКТИВЕН]${NC}"
-    else 
-        echo -e "${RED}[НЕ УСТАНОВЛЕНО]${NC}"
-    fi
-}
+if [[ ! -f "$CORE_FILE" ]]; then
+    echo -e "\033[0;31m[!] КРИТИЧЕСКАЯ ОШИБКА: Файл ядра не найден!\033[0m"
+    echo -e "\033[1;33m    Переустановите менеджер: bash install.sh\033[0m"
+    exit 1
+fi
 
-get_swap_status() {
-    local swp=$(free -m 2>/dev/null | awk '/^Swap:/ {print $2}')
-    local has_zram=$(lsblk 2>/dev/null | grep -i zram)
-    local has_file=$(swapon --show --noheadings 2>/dev/null | grep -i "/swapfile")
-    
-    if [[ -n "$has_zram" && -n "$has_file" ]]; then echo -e "${GREEN}[ГИБРИД: ZRAM + Swap]${NC}"
-    elif [[ -n "$has_zram" ]]; then echo -e "${GREEN}[ZRAM ВКЛЮЧЕН]${NC}"
-    elif [[ "$swp" != "0" && -n "$swp" ]]; then echo -e "${YELLOW}[DISK SWAP: ${swp} MB]${NC}"
-    else echo -e "${RED}[ВЫКЛЮЧЕН]${NC}"; fi
-}
+# shellcheck source=modules/core/m_00_core.sh
+source "$CORE_FILE"
 
-get_ssh_status() {
-    if [[ "${OS_TYPE:-}" == "macos" ]]; then echo -e "${YELLOW}[N/A]${NC}"; return; fi
-    local status_text
-    if systemctl is-active --quiet ssh 2>/dev/null || systemctl is-active --quiet sshd 2>/dev/null; then status_text="${GREEN}[РАБОТАЕТ]${NC}"; else status_text="${RED}[ВЫКЛЮЧЕН]${NC}"; fi
-    local ports=$(grep -i "^Port " /etc/ssh/sshd_config | awk '{print $2}' | xargs | sed 's/ /, /g')
-    [[ -z "$ports" ]] && ports="22"
-    echo -e "${status_text} ${GRAY}(Порты: ${ports})${NC}"
-}
+# =============================================================================
+# АВТОМАТИЧЕСКАЯ ЗАГРУЗКА ВСЕХ МОДУЛЕЙ (БАГ #17 FIX — авто-обнаружение)
+# =============================================================================
+# ДЛЯ ЧАЙНИКОВ: Менеджер сам находит все модули в папке modules/core/
+# в правильном порядке (по числовому префиксу: m_00_, m_10_, m_20_ и т.д.)
+# Если ты добавишь свой модуль в modules/ — он тоже загрузится автоматически!
 
-get_node_status() {
-    if crontab -l 2>/dev/null | grep -q "update_assets.sh"; then
-        echo -e "${GREEN}[Автообновление: ВКЛ]${NC}"
-    else
-        echo -e "${GRAY}[Автообновление: ВЫКЛ]${NC}"
-    fi
-}
-
-# --- Динамическая загрузка модулей ---
 load_modules() {
-    if [[ -f "$MOD_LIST_FILE" ]]; then
-        while read -r mod; do
-            [[ -z "$mod" || "$mod" == "m_core.sh" ]] && continue
-            if [[ -f "${MOD_DIR}/${mod}" ]]; then
-                source "${MOD_DIR}/${mod}" || echo -e "${RED}[!] Ошибка в модуле ${mod}${NC}"
-            fi
-        done < "$MOD_LIST_FILE"
-    else
-        for mod_path in "${MOD_DIR}"/m_*.sh; do
-            mod=$(basename "$mod_path")
-            [[ "$mod" == "m_core.sh" ]] && continue
-            source "$mod_path"
-        done
-    fi
-}
-load_modules
+    local loaded=0
+    local failed=()
 
-# --- Инициализация сети ---
-find_fastest_mirror
+    # --- 1. Core-модули в числовом порядке (m_00_core уже загружен выше) ---
+    while IFS= read -r -d '' mod_path; do
+        # Пропускаем уже загруженное ядро
+        [[ "$mod_path" == "$CORE_FILE" ]] && continue
+        [[ ! -f "$mod_path" ]] && continue
 
-if [[ "${1:-}" == "--silent-clean" ]]; then silent_cleaner_run; exit 0; fi
-
-trap 'echo -e "\n${YELLOW}Возврат...${NC}"; sleep 1; return 2>/dev/null || exit 0' INT
-
-pause() { echo -e "\n${CYAN}Нажмите [Enter] для возврата...${NC}"; read -r < /dev/tty; }
-export -f pause
-
-show_banner() {
-    echo -e "${CYAN}======================================================${NC}"
-    echo -e "${MAGENTA}${BOLD} ____              __  __       _   _             ${NC}"
-    echo -e "${MAGENTA}${BOLD}|  _ \\  ___  _ __ |  \\/  | __ _| |_| |_ ___  ___  ${NC}"
-    echo -e "${MAGENTA}${BOLD}| | | |/ _ \\| '_ \\| |\\/| |/ _\` | __| __/ _ \\/ _ \\ ${NC}"
-    echo -e "${MAGENTA}${BOLD}| |_| | (_) | | | | |  | | (_| | |_| ||  __/ (_) |${NC}"
-    echo -e "${MAGENTA}${BOLD}|____/ \\___/|_| |_|_|  |_|\\__,_|\\__|\\__\\___|\\___/ ${NC}"
-    echo -e "                                                      "
-    echo -e "${RED}${BOLD}              ОТ РЕШАЛЫ С ЛЮБОВЬЮ БЛЯТЬ         ${NC}"
-    echo -e "${CYAN}======================================================${NC}"
-    echo -e " ${GRAY}Версия ядра: v${APP_VERSION} (PRO)${NC}"
-    echo -e "${CYAN}======================================================${NC}"
-}
-
-check_updates() {
-    # Сбрасываем кэш обновлений при каждом возврате в меню
-    smart_dns_fix
-    
-    local TS=$(date +%s)
-    local RAND=$(( RANDOM % 9999 ))
-    local NANO=$(date +%N 2>/dev/null || echo $RANDOM)
-    local BUSTER="t=${TS}&r=${RAND}&n=${NANO}"
-    local TEMP_VER="/tmp/ver_check_${TS}.txt"
-    local REMOTE_VERSION=""
-    
-    local COMMIT_SHA=$(curl -fsSL --connect-timeout 2 --max-time 3 \
-        -H "Cache-Control: no-cache, no-store, must-revalidate" \
-        -H "Pragma: no-cache" \
-        -H "Expires: 0" \
-        "https://api.github.com/repos/DonMatteoVPN/DONMATTEO-PRO-MANAGER/commits/main" 2>/dev/null | \
-        grep -oP '"sha":\s*"\K[^"]+' | head -n1)
-    
-    if [[ -n "$COMMIT_SHA" && ${#COMMIT_SHA} -eq 40 ]]; then
-        local COMMIT_URL="https://raw.githubusercontent.com/DonMatteoVPN/DONMATTEO-PRO-MANAGER/${COMMIT_SHA}/don"
-        if curl -fsSL --connect-timeout 2 --max-time 5 \
-            -H "Cache-Control: no-cache, no-store, must-revalidate" \
-            -H "Pragma: no-cache" \
-            "$COMMIT_URL" -o "$TEMP_VER" 2>/dev/null; then
-            REMOTE_VERSION=$(grep '^export APP_VERSION=' "$TEMP_VER" | head -n 1 | cut -d'"' -f2 | tr -d '\r\n ')
-        fi
-    fi
-    
-    if [[ -z "$REMOTE_VERSION" ]]; then
-        local RAW_URL="https://raw.githubusercontent.com/DonMatteoVPN/DONMATTEO-PRO-MANAGER/main/don?${BUSTER}"
-        if curl -fsSL --connect-timeout 2 --max-time 5 \
-            -H "Cache-Control: no-cache, no-store, must-revalidate" \
-            -H "Pragma: no-cache" \
-            -H "Expires: 0" \
-            "$RAW_URL" -o "$TEMP_VER" 2>/dev/null; then
-            REMOTE_VERSION=$(grep '^export APP_VERSION=' "$TEMP_VER" | head -n 1 | cut -d'"' -f2 | tr -d '\r\n ')
-        fi
-    fi
-
-    if [[ -z "$REMOTE_VERSION" ]]; then
-        curl -fsSL --connect-timeout 1 --max-time 2 \
-            "https://purge.jsdelivr.net/gh/DonMatteoVPN/DONMATTEO-PRO-MANAGER@main/don" >/dev/null 2>&1
-        
-        local JSD_URL="https://cdn.jsdelivr.net/gh/DonMatteoVPN/DONMATTEO-PRO-MANAGER@main/don?${BUSTER}"
-        if curl -fsSL --connect-timeout 2 --max-time 5 \
-            -H "Cache-Control: no-cache" \
-            "$JSD_URL" -o "$TEMP_VER" 2>/dev/null; then
-            REMOTE_VERSION=$(grep '^export APP_VERSION=' "$TEMP_VER" | head -n 1 | cut -d'"' -f2 | tr -d '\r\n ')
-        fi
-    fi
-    
-    rm -f "$TEMP_VER"
-
-    if [[ -n "$REMOTE_VERSION" && "$REMOTE_VERSION" != "$APP_VERSION" ]]; then
-        if version_gt "$REMOTE_VERSION" "$APP_VERSION"; then
-            export HAS_UPDATE="yes"
-            export LATEST_VER="$REMOTE_VERSION"
-            export UPDATE_AVAILABLE="true"
+        if source "$mod_path"; then
+            ((loaded++))
+            [[ "$DEBUG" == "true" ]] && echo -e "${GRAY}[DEBUG] Загружен: ${mod_path}${NC}" >&2
         else
-            export HAS_UPDATE="no"
-            export LATEST_VER=""
-            export UPDATE_AVAILABLE="false"
+            failed+=("$(basename "$mod_path")")
         fi
-    else
-        export HAS_UPDATE="no"
-        export LATEST_VER=""
-        export UPDATE_AVAILABLE="false"
+    done < <(find "$CORE_DIR" -maxdepth 1 -name 'm_[0-9][0-9]_*.sh' -print0 2>/dev/null | sort -z)
+
+    # --- 2. Пользовательские модули (прямо в modules/, НЕ в core/) ---
+    while IFS= read -r -d '' mod_path; do
+        [[ ! -f "$mod_path" ]] && continue
+        # shellcheck source=/dev/null
+        if source "$mod_path"; then
+            ((loaded++))
+            [[ "$DEBUG" == "true" ]] && echo -e "${GRAY}[DEBUG] Польз. модуль: ${mod_path}${NC}" >&2
+        else
+            failed+=("[user] $(basename "$mod_path")")
+        fi
+    done < <(find "$MOD_DIR" -maxdepth 1 -name 'm_*.sh' -print0 2>/dev/null | sort -z)
+
+    if [[ ${#failed[@]} -gt 0 ]]; then
+        echo -e "${YELLOW}[!] Не удалось загрузить модули: ${failed[*]}${NC}"
     fi
+
+    [[ "$DEBUG" == "true" ]] && echo -e "${GRAY}[DEBUG] Загружено модулей: ${loaded}${NC}"
 }
 
+# =============================================================================
+# ИНИЦИАЛИЗАЦИЯ
+# =============================================================================
+migrate_old_files          # Переносим файлы из старых мест (один раз)
+load_settings 2>/dev/null  # Загружаем настройки (из m_20_config.sh)
+ensure_google_dns          # Стабильный DNS для работы с сетью
+load_modules               # Загружаем все модули
+
+# Восстанавливаем DNS при выходе из скрипта (по любой причине)
+trap 'restore_dns 2>/dev/null || true' EXIT
+
+# =============================================================================
+# ТИХАЯ ОЧИСТКА (для cron: don --silent-clean)
+# =============================================================================
+if [[ "${DO_SILENT_CLEAN:-false}" == "true" ]]; then
+    silent_cleaner_run 2>/dev/null || true
+    exit 0
+fi
+
+# =============================================================================
+# ПРОВЕРКА ЗАВИСИМОСТЕЙ (БАГ #17 FIX)
+# =============================================================================
+dep_check "python3" "curl" "awk" "grep" "sed" >/dev/null 2>&1
+
+# =============================================================================
+# ПРОВЕРКА ОБНОВЛЕНИЙ (не блокирует запуск, тихо в фоне)
+# =============================================================================
+check_update_on_start 2>/dev/null &
+
+# =============================================================================
+# ГЛАВНОЕ МЕНЮ
+# =============================================================================
 main_menu() {
-    if [[ "${DEBUG:-false}" == "true" ]]; then
-        echo -e "${YELLOW}${BOLD}[ DEBUG MODE: ON ]${NC}"
-        echo -e "${GRAY}Все сообщения об ошибках и детальный вывод команд включены.${NC}\n"
-    fi
-
-    check_updates
-
     while true; do
-        clear; show_banner
-        if [[ "${HAS_UPDATE:-no}" == "yes" ]]; then
-            echo -e "${YELLOW}${BOLD}🎉 ВНИМАНИЕ! ДОСТУПНО НОВОЕ ОБНОВЛЕНИЕ МЕНЕДЖЕРА! 🎉${NC}"
-            echo -e "${GREEN}✨ Вышла новая версия: v${LATEST_VER:-?}${NC} (У вас v${APP_VERSION})"
-            echo -e "${CYAN}👉 Нажмите [8], чтобы обновиться в один клик!${NC}"
-            echo -e "${YELLOW}======================================================${NC}"
-        fi
-        echo -e " ${GREEN}U.${NC} 🛠️ УСТАНОВКА И ИНИЦИАЛИЗАЦИЯ ${BLUE}(Sysctl + UFW + Fail2Ban)${NC}"
-        echo -e " ${GREEN}R.${NC} 🔍 Reality TLS Scanner"
-        echo -e " ${GREEN}N.${NC} 🛰️ Управление Нодой $(get_node_status)"
-        echo -e "${BLUE}------------------------------------------------------${NC}"
-        echo -e " ${YELLOW}1.${NC} 🌐 Сетевой Экран (UFW)\e[40G${NC}$(get_ufw_status)"
-        echo -e " ${YELLOW}2.${NC} 🔑 Управление SSH (Порты)\e[40G${NC}$(get_ssh_status)"
-        echo -e " ${YELLOW}3.${NC} 👮 Защита (Fail2Ban & Whitelist)\e[40G${NC}$(get_f2b_status)"
-        echo -e " ${YELLOW}4.${NC} 🚦 TrafficGuard PRO\e[40G${NC}$(get_tg_status)"
-        echo -e " ${YELLOW}5.${NC} ⚙️ Настройки (Swap / ZRAM)\e[40G${NC}$(get_swap_status)"
-        echo -e " ${YELLOW}6.${NC} 🧹 Очистка Сервера (Место на диске)"
-        if [[ "${HAS_UPDATE:-no}" == "yes" ]]; then
-            echo -e "${BLUE}------------------------------------------------------${NC}"
-            echo -e " ${GREEN}8.${NC} 🎁 ${BOLD}СКАЧАТЬ ОБНОВЛЕНИЕ ДО v${LATEST_VER:-?}${NC}"
-        fi
-        echo -e " ${RED}0.${NC} ❌ Выход                             "
-        echo -e "${CYAN}======================================================${NC}"
-        read -p "Выберите нужную категорию: " choice
-        case $choice in
-            u|U) install_menu; check_updates ;; 
-            r|R) menu_scanner; check_updates ;; 
-            n|N) menu_node; check_updates ;;
-            1) menu_ufw; check_updates ;; 
-            2) menu_ssh; check_updates ;; 
-            3) menu_fail2ban; check_updates ;; 
-            4) menu_trafficguard; check_updates ;;
-            5) manage_swap; check_updates ;; 
-            6) menu_cleaner; check_updates ;;
-            8) [[ "$HAS_UPDATE" == "yes" ]] && run_auto_update "$@" || { echo -e "${RED}Обновлений нет.${NC}"; sleep 1; } ;;
-            0) echo -e "${GREEN}Удачной работы! 💪${NC}"; exit 0 ;;
-            *) echo -e "${RED}Ошибка: Неверный выбор.${NC}"; sleep 1 ;;
+        clear
+
+        # === ШАПКА ===
+        echo -e "${BLUE}╔══════════════════════════════════════════════════════╗${NC}"
+        echo -e "${BLUE}║${NC}  ${BOLD}${MAGENTA}🛡️  DONMATTEO PRO MANAGER${NC}  ${GRAY}v${DON_VERSION}${NC}${BLUE}                  ║${NC}"
+        echo -e "${BLUE}╚══════════════════════════════════════════════════════╝${NC}"
+        show_system_info 2>/dev/null
+        echo ""
+
+        # === СТАТУСЫ ЗАЩИТЫ ===
+        echo -e " ${BOLD}ЗАЩИТА СЕРВЕРА:${NC}"
+        echo -e "  🔒 UFW:       $(get_ufw_status)   🔐 F2B: $(get_f2b_status)"
+        echo -e "  🛡️  TGuard:   $(get_tg_status 2>/dev/null || echo '...')   ⚙️  SYS: $(get_sysctl_status)"
+        echo -e "  💾 Memory:   $(get_swap_status)"
+        echo ""
+
+        # === ПУНКТЫ МЕНЮ ===
+        echo -e " ${BOLD}БЕЗОПАСНОСТЬ:${NC}"
+        echo -e "  ${GREEN}1.${NC} 🔒 Файервол (UFW)"
+        echo -e "  ${GREEN}2.${NC} 🔐 Fail2Ban — Защита от взломщиков"
+        echo -e "  ${GREEN}3.${NC} 🛡️  TrafficGuard — Блокировка сканеров"
+        echo -e "  ${GREEN}4.${NC} 🔑 SSH-порты"
+        echo ""
+
+        echo -e " ${BOLD}УПРАВЛЕНИЕ СЕРВЕРОМ:${NC}"
+        echo -e "  ${CYAN}5.${NC} 🧹 Очистка (место на диске)"
+        echo -e "  ${CYAN}6.${NC} 💾 Память (ZRAM + Swap)"
+        echo -e "  ${CYAN}7.${NC} 🛰️  Нода (Xray Assets / Логи)"
+        echo -e "  ${CYAN}8.${NC} 🔍 TLS-Scanner (Поиск SNI)"
+        echo ""
+
+        echo -e " ${BOLD}УСТАНОВКА И СИСТЕМА:${NC}"
+        echo -e "  ${YELLOW}9.${NC} 🚀 Установить Золотой Стандарт 2026"
+        echo -e "  ${YELLOW}U.${NC} 🔄 Обновить менеджер $(get_config_status 2>/dev/null)"
+        echo -e "  ${YELLOW}C.${NC} ⚙️  Настройки менеджера"
+        echo ""
+
+        echo -e " ${BOLD}ПРОЧЕЕ:${NC}"
+        echo -e "  ${GRAY}0.${NC} 🚪 Выход"
+
+        echo -e "${BLUE}══════════════════════════════════════════════════════${NC}"
+        read -rp ">> Выберите действие: " choice < /dev/tty
+
+        case "${choice,,}" in
+            1) menu_ufw 2>/dev/null || echo -e "${RED}Модуль UFW недоступен.${NC}" ;;
+            2) menu_f2b 2>/dev/null || echo -e "${RED}Модуль Fail2Ban недоступен.${NC}" ;;
+            3) menu_tg 2>/dev/null  || echo -e "${RED}Модуль TGuard недоступен.${NC}" ;;
+            4) menu_ssh 2>/dev/null || echo -e "${RED}Модуль SSH недоступен.${NC}" ;;
+            5) menu_cleaner 2>/dev/null || echo -e "${RED}Модуль Cleaner недоступен.${NC}" ;;
+            6) menu_swap 2>/dev/null    || echo -e "${RED}Модуль Swap недоступен.${NC}" ;;
+            7) menu_node 2>/dev/null    || echo -e "${RED}Модуль Node недоступен.${NC}" ;;
+            8) menu_scanner 2>/dev/null || echo -e "${RED}Модуль Scanner недоступен.${NC}" ;;
+            9) menu_installer 2>/dev/null || echo -e "${RED}Модуль Installer недоступен.${NC}" ;;
+            u) menu_update 2>/dev/null  || echo -e "${RED}Модуль Update недоступен.${NC}" ;;
+            c) menu_config 2>/dev/null  || echo -e "${RED}Модуль Config недоступен.${NC}" ;;
+            0|q|exit|quit)
+                echo -e "${GREEN}До свидания!${NC}"
+                exit 0 ;;
+            *)
+                # Проверяем не является ли это числовым выбором для пользовательского модуля
+                echo -e "${YELLOW}[!] Неизвестная команда: '${choice}'.${NC}"
+                sleep 1 ;;
         esac
     done
 }
 
-main_menu "$@"
+# Запускаем главное меню
+main_menu
