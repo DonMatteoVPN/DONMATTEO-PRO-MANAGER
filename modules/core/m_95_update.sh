@@ -99,6 +99,7 @@ do_update() {
 
     # --- Обновляем core-модули ---
     while IFS= read -r mod_name; do
+        mod_name="${mod_name//$'\r'/}"
         [[ -z "$mod_name" || "$mod_name" =~ ^# ]] && continue
         local core_path="${CORE_DIR}/${mod_name}"
         local remote_path="modules/core/${mod_name}"

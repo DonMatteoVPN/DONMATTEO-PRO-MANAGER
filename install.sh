@@ -85,7 +85,7 @@ install_download() {
         echo -e "${YELLOW}[!] Прямой доступ заблокирован. Подбор зеркала...${NC}"
         local n=0
         for proxy in "${GH_PROXIES[@]}"; do
-            ((n++))
+            n=$((n + 1))
             echo -ne "\r  Зеркало [${n}/${#GH_PROXIES[@]}]..."
             curl -fsSL --connect-timeout 3 --max-time "$timeout" \
                 "${proxy}${url}" -o "$output" >/dev/null 2>&1 && {
@@ -169,6 +169,8 @@ install_download "${REPO_RAW}/etc/checksums.sha256" "${CONF_DIR}/checksums.sha25
 ok_count=0
 fail_count=0
 while IFS= read -r mod_name; do
+    # Удаляем \r если файл был отредактирован в Windows (ВАЖНЫЙ ФИКС)
+    mod_name="${mod_name//$'\r'/}"
     [[ -z "$mod_name" || "$mod_name" =~ ^# ]] && continue
     local_path="${CORE_DIR}/${mod_name}"
     remote_url="${REPO_RAW}/modules/core/${mod_name}"
